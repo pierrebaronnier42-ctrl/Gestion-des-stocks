@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gestion Stock Web</title>
+  <meta name="theme-color" content="#111827" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div id="brandLogo" class="brand-logo">GS</div>
+        <div>
+          <h1>Gestion Stock</h1>
+          <p>Inventaires · Commandes · Réceptions</p>
+        </div>
+      </div>
+      <nav id="nav" class="nav"></nav>
+      <div class="sidebar-footer">
+        <button id="btnExportJson" class="ghost full">Exporter sauvegarde</button>
+        <label class="ghost full file-label">
+          Importer sauvegarde
+          <input id="importJson" type="file" accept="application/json" hidden />
+        </label>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Logiciel web local — prêt à héberger</p>
+          <h2 id="pageTitle">Tableau de bord</h2>
+        </div>
+        <div class="top-actions">
+          <button id="btnSeed" class="secondary">Données exemple</button>
+          <button id="btnReset" class="danger-soft">Réinitialiser</button>
+        </div>
+      </header>
+      <section id="app" class="content"></section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal-backdrop hidden" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="modalTitle"></h3>
+        <button id="modalClose" class="icon-btn" aria-label="Fermer">×</button>
+      </div>
+      <form id="modalForm" class="modal-body"></form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase-config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
