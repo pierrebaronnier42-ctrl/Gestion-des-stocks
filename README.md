@@ -90,3 +90,15 @@ Dans **Paramètres**, deux boutons sont disponibles :
 
 La clé utilisée est une clé publique `anon/publishable`.
 Ne jamais mettre une clé `service_role` dans ce site.
+
+
+## Si les boutons Supabase ne s'affichent pas
+
+Cette version force le rafraîchissement du cache GitHub Pages. Après l'envoi sur GitHub, recharge la page avec `Ctrl + F5` sur ordinateur ou ferme/réouvre l'onglet sur téléphone. Les boutons visibles dans Paramètres doivent être :
+
+- Charger depuis Supabase
+- Envoyer vers Supabase
+- Télécharger la sauvegarde JSON
+- Exporter toutes les tables CSV
+
+Si tu vois encore l'ancien texte “Les données sont stockées dans le navigateur”, c'est que l'ancien `app.js` est encore servi par le cache du navigateur ou que tous les fichiers du ZIP n'ont pas été remplacés dans GitHub.
