@@ -102,3 +102,14 @@ Cette version force le rafraîchissement du cache GitHub Pages. Après l'envoi s
 - Exporter toutes les tables CSV
 
 Si tu vois encore l'ancien texte “Les données sont stockées dans le navigateur”, c'est que l'ancien `app.js` est encore servi par le cache du navigateur ou que tous les fichiers du ZIP n'ont pas été remplacés dans GitHub.
+
+
+## Version 1.28 — documents multipages
+
+- Suppression des boutons **Données exemple** et **Réinitialiser** de l’en-tête.
+- Suppression de la mention **Logiciel web local — prêt à héberger**.
+- Les bons de commande et bons de livraison acceptent maintenant plusieurs pages.
+- Sur téléphone, tu peux ajouter les pages une par une avec l’appareil photo.
+- Depuis la galerie ou un ordinateur, plusieurs fichiers peuvent être sélectionnés en une seule fois.
+- Chaque document affiche son nombre de pages et permet de supprimer une page individuellement.
+- Le ticket température reste unique par livraison.

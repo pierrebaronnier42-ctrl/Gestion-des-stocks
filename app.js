@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.27.0-supabase-visible';
+const APP_VERSION = '1.28.0-multipage-scans';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -145,6 +145,50 @@ const pages = [
   { id: 'settings', label: 'Paramètres', icon: '⚙️' }
 ];
 
+function normalizeScanPage(page = {}, fallback = {}, index = 0) {
+  const fileData = page.fileData || fallback.fileData || '';
+  if (!fileData) return null;
+  return {
+    id: page.id || `${fallback.id || uid()}-page-${index + 1}`,
+    fileName: page.fileName || fallback.fileName || `page-${index + 1}.jpg`,
+    fileType: page.fileType || fallback.fileType || 'image/jpeg',
+    fileData,
+    scannedAt: page.scannedAt || fallback.scannedAt || new Date().toISOString()
+  };
+}
+
+function normalizeScannedDocumentRecord(scan = {}) {
+  const rawPages = Array.isArray(scan.pages) ? scan.pages : [];
+  let pages = rawPages.map((page, index) => normalizeScanPage(page, scan, index)).filter(Boolean);
+  if (!pages.length && scan.fileData) {
+    const legacyPage = normalizeScanPage({}, scan, 0);
+    if (legacyPage) pages = [legacyPage];
+  }
+  const normalized = { ...scan, pages };
+  delete normalized.fileData;
+  delete normalized.fileName;
+  delete normalized.fileType;
+  return normalized;
+}
+
+function scanPages(scan = {}) {
+  if (Array.isArray(scan.pages) && scan.pages.length) return scan.pages;
+  if (scan.fileData) {
+    return [{
+      id: `${scan.id || 'legacy'}-page-1`,
+      fileName: scan.fileName || 'page-1.jpg',
+      fileType: scan.fileType || 'image/jpeg',
+      fileData: scan.fileData,
+      scannedAt: scan.scannedAt || ''
+    }];
+  }
+  return [];
+}
+
+function scanPageCount(scan = {}) {
+  return scanPages(scan).length;
+}
+
 function normalizeState(input = {}) {
   const defaults = defaultState();
   const parsed = input && typeof input === 'object' ? input : {};
@@ -154,8 +198,8 @@ function normalizeState(input = {}) {
     settings: { ...defaults.settings, ...(parsed.settings || {}) },
     inventorySessions: parsed.inventorySessions || [],
     monthEndSessions: parsed.monthEndSessions || [],
-    scannedOrders: parsed.scannedOrders || [],
-    scannedReceipts: parsed.scannedReceipts || [],
+    scannedOrders: (parsed.scannedOrders || []).map(normalizeScannedDocumentRecord),
+    scannedReceipts: (parsed.scannedReceipts || []).map(normalizeScannedDocumentRecord),
     products: (parsed.products || []).map(migrateProduct)
   };
   return ensureInventoryCatalog(merged);
@@ -468,8 +512,31 @@ function ensureInventoryCatalog(targetState) {
   return targetState;
 }
 
+function stateWithoutHeavyScanData(sourceState = state) {
+  const clone = JSON.parse(JSON.stringify(sourceState));
+  const stripPages = list => (list || []).map(scan => ({
+    ...scan,
+    pages: scanPages(scan).map(page => ({
+      ...page,
+      fileData: ''
+    }))
+  }));
+  clone.scannedOrders = stripPages(clone.scannedOrders);
+  clone.scannedReceipts = stripPages(clone.scannedReceipts);
+  return clone;
+}
+
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch (error) {
+    console.warn('Stockage local saturé par les documents numérisés : sauvegarde locale allégée utilisée.', error);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateWithoutHeavyScanData(state)));
+    } catch (fallbackError) {
+      console.warn('Sauvegarde locale allégée impossible.', fallbackError);
+    }
+  }
   scheduleCloudSave();
 }
 
@@ -688,23 +755,23 @@ function bindPageEvents() {
   const orderScanInput = document.querySelector('#orderScanInput');
   if (orderScanInput) {
     orderScanInput.addEventListener('change', event => {
-      const file = event.target.files?.[0];
+      const files = Array.from(event.target.files || []);
       const target = pendingOrderScan;
       pendingOrderScan = null;
       event.target.value = '';
-      if (!file || !target) return;
-      saveScannedOrderFile(target.date, target.type, file);
+      if (!files.length || !target) return;
+      saveScannedOrderFiles(target.date, target.type, files);
     });
   }
   const receiptScanInput = document.querySelector('#receiptScanInput');
   if (receiptScanInput) {
     receiptScanInput.addEventListener('change', event => {
-      const file = event.target.files?.[0];
+      const files = Array.from(event.target.files || []);
       const target = pendingReceiptScan;
       pendingReceiptScan = null;
       event.target.value = '';
-      if (!file || !target) return;
-      saveScannedReceiptFile(target.date, target.type, target.docType, file);
+      if (!files.length || !target) return;
+      saveScannedReceiptFiles(target.date, target.type, target.docType, files);
     });
   }
   const logoInput = document.querySelector('#settingLogoInput');
@@ -893,61 +960,87 @@ function orderScanFileName(date, type, originalName = '') {
   return `bon-commande-${date}-${type}.${ext}`;
 }
 
-function saveScannedOrderFile(date, type, file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = String(reader.result || '');
-    if (String(file.type || '').startsWith('image/')) {
+function prepareScannedPage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return reject(new Error('Fichier manquant'));
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const basePage = {
+        id: uid(),
+        fileName: file.name || `page-${Date.now()}.jpg`,
+        fileType: file.type || 'application/octet-stream',
+        fileData: dataUrl,
+        scannedAt: new Date().toISOString()
+      };
+      if (!String(file.type || '').startsWith('image/')) return resolve(basePage);
+
       const img = new Image();
       img.onload = () => {
-        const maxSide = 1600;
-        const ratio = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round((img.width || 1) * ratio));
-        canvas.height = Math.max(1, Math.round((img.height || 1) * ratio));
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const compressed = canvas.toDataURL('image/jpeg', 0.82);
-        persistScannedOrder(date, type, file, compressed, 'image/jpeg');
+        try {
+          const maxSide = 1200;
+          const ratio = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round((img.width || 1) * ratio));
+          canvas.height = Math.max(1, Math.round((img.height || 1) * ratio));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve({
+            ...basePage,
+            fileType: 'image/jpeg',
+            fileData: canvas.toDataURL('image/jpeg', 0.68)
+          });
+        } catch (error) {
+          resolve(basePage);
+        }
       };
-      img.onerror = () => persistScannedOrder(date, type, file, dataUrl, file.type || 'image/jpeg');
+      img.onerror = () => resolve(basePage);
       img.src = dataUrl;
-    } else {
-      persistScannedOrder(date, type, file, dataUrl, file.type || 'application/octet-stream');
-    }
-  };
-  reader.onerror = () => toast('Impossible de lire le fichier numérisé');
-  reader.readAsDataURL(file);
+    };
+    reader.onerror = () => reject(new Error('Impossible de lire le fichier numérisé'));
+    reader.readAsDataURL(file);
+  });
 }
 
-function persistScannedOrder(date, type, file, fileData, fileType) {
+async function saveScannedOrderFiles(date, type, files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return;
+  toast(`Traitement de ${list.length} page(s)…`);
+  try {
+    const newPages = [];
+    for (const file of list) newPages.push(await prepareScannedPage(file));
+    persistScannedOrderPages(date, type, newPages);
+  } catch (error) {
+    console.error(error);
+    toast('Impossible de lire une ou plusieurs pages du bon de commande.');
+  }
+}
+
+function persistScannedOrderPages(date, type, newPages) {
   const previousScans = [...(state.scannedOrders || [])];
   const existing = getScannedOrder(date, type);
-  const record = {
+  const record = normalizeScannedDocumentRecord({
+    ...(existing || {}),
     id: existing?.id || uid(),
     date,
     type,
     dayName: dayNames[parseDate(date).getDay()],
-    fileName: file?.name || orderScanFileName(date, type),
-    fileType,
-    fileData,
+    pages: [...scanPages(existing || {}), ...(newPages || [])],
     scannedAt: new Date().toISOString(),
-    note: ''
-  };
+    note: existing?.note || ''
+  });
   state.scannedOrders = previousScans.filter(scan => !(scan.date === date && scan.type === type));
   state.scannedOrders.push(record);
   try {
     saveState();
     render();
-    toast(`Bon de commande ${orderTypeLabel(type)} du ${formatDateFr(date)} numérisé`);
+    toast(`${scanPageCount(record)} page(s) enregistrée(s) pour le bon de commande ${orderTypeLabel(type)} du ${formatDateFr(date)}`);
   } catch (error) {
     console.error(error);
     state.scannedOrders = previousScans;
-    toast('Fichier trop volumineux. Essaie une photo moins lourde ou recadre le document.');
+    toast('Impossible d’enregistrer les pages numérisées.');
   }
 }
-
 
 function generateReceiptSchedule(weeks = 8) {
   // Les réceptions suivent les mêmes jours que les commandes, mais le HUB est inversé :
@@ -992,54 +1085,42 @@ function getScannedReceipt(date, type, docType) {
 function receiptScanFileName(date, type, docType, originalName = '') {
   const ext = originalName.includes('.') ? originalName.split('.').pop() : 'jpg';
   if (docType === 'temperature') return `ticket-temperature-${date}.${ext}`;
-  const prefix = 'bon-livraison';
-  return `${prefix}-${date}-${type}.${ext}`;
+  return `bon-livraison-${date}-${type}.${ext}`;
 }
 
-function saveScannedReceiptFile(date, type, docType, file) {
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = String(reader.result || '');
-    if (String(file.type || '').startsWith('image/')) {
-      const img = new Image();
-      img.onload = () => {
-        const maxSide = 1600;
-        const ratio = Math.min(1, maxSide / Math.max(img.width || 1, img.height || 1));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.max(1, Math.round((img.width || 1) * ratio));
-        canvas.height = Math.max(1, Math.round((img.height || 1) * ratio));
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const compressed = canvas.toDataURL('image/jpeg', 0.82);
-        persistScannedReceipt(date, type, docType, file, compressed, 'image/jpeg');
-      };
-      img.onerror = () => persistScannedReceipt(date, type, docType, file, dataUrl, file.type || 'image/jpeg');
-      img.src = dataUrl;
-    } else {
-      persistScannedReceipt(date, type, docType, file, dataUrl, file.type || 'application/octet-stream');
-    }
-  };
-  reader.onerror = () => toast('Impossible de lire le fichier numérisé');
-  reader.readAsDataURL(file);
+async function saveScannedReceiptFiles(date, type, docType, files) {
+  const allFiles = Array.from(files || []).filter(Boolean);
+  if (!allFiles.length) return;
+  const list = docType === 'temperature' ? allFiles.slice(0, 1) : allFiles;
+  toast(`Traitement de ${list.length} page(s)…`);
+  try {
+    const newPages = [];
+    for (const file of list) newPages.push(await prepareScannedPage(file));
+    persistScannedReceiptPages(date, type, docType, newPages);
+  } catch (error) {
+    console.error(error);
+    toast('Impossible de lire une ou plusieurs pages du document de livraison.');
+  }
 }
 
-function persistScannedReceipt(date, type, docType, file, fileData, fileType) {
+function persistScannedReceiptPages(date, type, docType, newPages) {
   const previousScans = [...(state.scannedReceipts || [])];
   const scopedType = receiptScanScopeType(type, docType);
   const existing = getScannedReceipt(date, scopedType, docType);
-  const record = {
+  const pages = docType === 'temperature'
+    ? (newPages || []).slice(0, 1)
+    : [...scanPages(existing || {}), ...(newPages || [])];
+  const record = normalizeScannedDocumentRecord({
+    ...(existing || {}),
     id: existing?.id || uid(),
     date,
     type: scopedType,
     docType,
     dayName: dayNames[parseDate(date).getDay()],
-    fileName: file?.name || receiptScanFileName(date, scopedType, docType),
-    fileType,
-    fileData,
+    pages,
     scannedAt: new Date().toISOString(),
-    note: ''
-  };
+    note: existing?.note || ''
+  });
   state.scannedReceipts = previousScans.filter(scan => {
     if (docType === 'temperature') return !(scan.date === date && scan.docType === 'temperature');
     return !(scan.date === date && scan.type === scopedType && scan.docType === docType);
@@ -1049,11 +1130,11 @@ function persistScannedReceipt(date, type, docType, file, fileData, fileType) {
     saveState();
     render();
     const suffix = docType === 'temperature' ? 'de la livraison' : receiptTypeLabel(scopedType);
-    toast(`${receiptDocLabel(docType)} ${suffix} du ${formatDateFr(date)} numérisé`);
+    toast(`${receiptDocLabel(docType)} ${suffix} : ${scanPageCount(record)} page(s) enregistrée(s)`);
   } catch (error) {
     console.error(error);
     state.scannedReceipts = previousScans;
-    toast('Fichier trop volumineux. Essaie une photo moins lourde ou recadre le document.');
+    toast('Impossible d’enregistrer les pages numérisées.');
   }
 }
 
@@ -1397,11 +1478,12 @@ function renderOrders() {
   const forecastRows = orderSchedule.map(row => {
     const typeActions = row.types.map(type => {
       const scan = getScannedOrder(row.date, type);
+      const pageCount = scanPageCount(scan || {});
       return `
         <div class="order-scan-slot">
-          <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ' ✓' : ''}</span>
-          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Remplacer' : 'Numériser'}</button>
-          ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>` : ''}
+          <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) ✓` : ''}</span>
+          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Ajouter des pages' : 'Numériser'}</button>
+          ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button>` : ''}
         </div>
       `;
     }).join('');
@@ -1416,18 +1498,22 @@ function renderOrders() {
     `;
   }).join('');
 
-  const scannedRows = scannedOrders.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)) || String(a.type).localeCompare(String(b.type))).map(scan => `
-    <tr>
-      <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
-      <td>${escapeHtml(orderTypeLabel(scan.type))}</td>
-      <td><strong>${escapeHtml(scan.fileName || 'Bon de commande')}</strong><br><span class="muted">Numérisé le ${escapeHtml(new Date(scan.scannedAt || scan.date).toLocaleString('fr-FR'))}</span></td>
-      <td class="actions">
-        <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
-        <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Remplacer</button>
-        <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer</button>
-      </td>
-    </tr>
-  `).join('') || `<tr><td colspan="4" class="empty">Aucun bon de commande numérisé pour le moment.</td></tr>`;
+  const scannedRows = scannedOrders.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)) || String(a.type).localeCompare(String(b.type))).map(scan => {
+    const pages = scanPages(scan);
+    const latest = pages.map(page => page.scannedAt || '').sort().slice(-1)[0] || scan.scannedAt || scan.date;
+    return `
+      <tr>
+        <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
+        <td>${escapeHtml(orderTypeLabel(scan.type))}</td>
+        <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
+        <td class="actions">
+          <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
+          <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Ajouter des pages</button>
+          <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer le document</button>
+        </td>
+      </tr>
+    `;
+  }).join('') || `<tr><td colspan="4" class="empty">Aucun bon de commande numérisé pour le moment.</td></tr>`;
 
   const rows = filterRows(state.orders, ['ref', 'status']).sort((a,b) => String(b.date).localeCompare(String(a.date))).map(o => {
     const supplier = getSupplier(o.supplierId);
@@ -1450,7 +1536,7 @@ function renderOrders() {
   }).join('') || `<tr><td colspan="7" class="empty">Aucune commande enregistrée.</td></tr>`;
 
   return `
-    <input id="orderScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
+    <input id="orderScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" multiple />
 
     <div class="card">
       <div class="toolbar">
@@ -1467,10 +1553,10 @@ function renderOrders() {
       <div class="toolbar">
         <div>
           <h3>Bons de commande numérisés</h3>
-          <p class="muted">Sur téléphone, le bouton Numériser ouvre l’appareil photo. Sur ordinateur, il ouvre le choix de fichier.</p>
+          <p class="muted">Un même bon peut contenir autant de pages que nécessaire. Sur téléphone, photographie les pages une par une en appuyant plusieurs fois sur « Ajouter des pages ». Depuis la galerie ou un ordinateur, tu peux aussi sélectionner plusieurs fichiers en une seule fois.</p>
         </div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Fichier</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Pages</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
     </div>
 
     <div class="card" style="margin-top:18px;">
@@ -1531,9 +1617,9 @@ function renderReceipts() {
         <div class="receipt-scan-slot">
           <span class="badge info">${escapeHtml(receiptTypeLabel(type))}</span>
           <span class="receipt-doc-actions">
-            <span class="badge ${deliveryScan ? 'success' : 'warning'}">BL${deliveryScan ? ' ✓' : ''}</span>
-            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Remplacer BL' : 'Numériser BL'}</button>
-            ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir BL</button>` : ''}
+            <span class="badge ${deliveryScan ? 'success' : 'warning'}">BL${deliveryScan ? ` · ${scanPageCount(deliveryScan)} page(s) ✓` : ''}</span>
+            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Ajouter des pages BL' : 'Numériser BL'}</button>
+            ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir les ${scanPageCount(deliveryScan)} page(s)</button>` : ''}
           </span>
         </div>
       `;
@@ -1566,19 +1652,24 @@ function renderReceipts() {
     return acc;
   }, {}));
 
-  const scannedRows = scannedReceiptsForDisplay.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)) || String(a.type).localeCompare(String(b.type)) || String(a.docType).localeCompare(String(b.docType))).map(scan => `
-    <tr>
-      <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
-      <td>${escapeHtml(scan.docType === 'temperature' ? 'Livraison complète' : receiptTypeLabel(scan.type))}</td>
-      <td>${escapeHtml(receiptDocLabel(scan.docType))}</td>
-      <td><strong>${escapeHtml(scan.fileName || receiptDocLabel(scan.docType))}</strong><br><span class="muted">Numérisé le ${escapeHtml(new Date(scan.scannedAt || scan.date).toLocaleString('fr-FR'))}</span></td>
-      <td class="actions">
-        <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
-        <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">Remplacer</button>
-        <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer</button>
-      </td>
-    </tr>
-  `).join('') || `<tr><td colspan="5" class="empty">Aucun document de livraison numérisé pour le moment.</td></tr>`;
+  const scannedRows = scannedReceiptsForDisplay.slice().sort((a,b) => String(b.date).localeCompare(String(a.date)) || String(a.type).localeCompare(String(b.type)) || String(a.docType).localeCompare(String(b.docType))).map(scan => {
+    const pages = scanPages(scan);
+    const latest = pages.map(page => page.scannedAt || '').sort().slice(-1)[0] || scan.scannedAt || scan.date;
+    const isTemperature = scan.docType === 'temperature';
+    return `
+      <tr>
+        <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
+        <td>${escapeHtml(isTemperature ? 'Livraison complète' : receiptTypeLabel(scan.type))}</td>
+        <td>${escapeHtml(receiptDocLabel(scan.docType))}</td>
+        <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
+        <td class="actions">
+          <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
+          <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Ajouter des pages'}</button>
+          <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer le document</button>
+        </td>
+      </tr>
+    `;
+  }).join('') || `<tr><td colspan="5" class="empty">Aucun document de livraison numérisé pour le moment.</td></tr>`;
 
   const rows = state.receipts.slice().sort((a,b) => String(b.date).localeCompare(String(a.date))).map(r => `
     <tr>
@@ -1592,7 +1683,7 @@ function renderReceipts() {
   `).join('') || `<tr><td colspan="6" class="empty">Aucune réception enregistrée.</td></tr>`;
 
   return `
-    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
+    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" multiple />
 
     <div class="card">
       <div class="toolbar">
@@ -1609,7 +1700,7 @@ function renderReceipts() {
       <div class="toolbar">
         <div>
           <h3>Documents de livraison numérisés</h3>
-          <p class="muted">Sur téléphone, les boutons de numérisation ouvrent l’appareil photo. Sur ordinateur, ils ouvrent le choix de fichier.</p>
+          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Sur téléphone, photographie les pages une par une en utilisant « Ajouter des pages ». Depuis la galerie ou un ordinateur, plusieurs fichiers peuvent être sélectionnés en une seule fois. Le ticket température reste unique par livraison.</p>
         </div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Document</th><th>Fichier</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
@@ -2210,17 +2301,39 @@ const actions = {
   viewScannedOrder(id) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
     if (!scan) return toast('Bon de commande introuvable');
-    const isImage = String(scan.fileType || '').startsWith('image/');
-    const preview = isImage
-      ? `<img class="scan-preview" src="${escapeHtml(scan.fileData)}" alt="Bon de commande numérisé" />`
-      : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(scan.fileData)}" download="${escapeHtml(scan.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger / ouvrir le fichier</a></div>`;
+    const pages = scanPages(scan);
+    const previews = pages.map((page, index) => {
+      const isImage = String(page.fileType || '').startsWith('image/');
+      const preview = isImage
+        ? `<img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Page ${index + 1} du bon de commande" />`
+        : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger / ouvrir le fichier</a></div>`;
+      return `
+        <section class="scan-page-card">
+          <div class="scan-page-header"><strong>Page ${index + 1}</strong><span class="muted">${escapeHtml(page.fileName || '')}</span></div>
+          ${preview}
+          <div class="form-actions scan-page-actions">
+            <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger cette page</a>
+            <button type="button" class="small danger-soft" data-action="deleteScannedOrderPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
+          </div>
+        </section>
+      `;
+    }).join('') || '<p class="muted">Aucune page enregistrée.</p>';
     openModal(`Bon de commande · ${orderTypeLabel(scan.type)}`, `
       <div class="scan-modal-content">
-        <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(orderTypeLabel(scan.type))}<br><strong>Fichier :</strong> ${escapeHtml(scan.fileName || '-')}</p>
-        <div class="form-actions"><a class="download-link" href="${escapeHtml(scan.fileData)}" download="${escapeHtml(scan.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger</a><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
-        ${preview}
+        <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(orderTypeLabel(scan.type))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
+        <div class="form-actions"><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
+        <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  deleteScannedOrderPage(id, pageId) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    if (!scan) return toast('Bon de commande introuvable');
+    if (!confirm('Supprimer cette page du bon de commande ?')) return;
+    const pages = scanPages(scan).filter(page => page.id !== pageId);
+    if (!pages.length) state.scannedOrders = (state.scannedOrders || []).filter(item => item.id !== id);
+    else scan.pages = pages;
+    saveState(); closeModal(); render(); toast('Page supprimée');
   },
   deleteScannedOrder(id) {
     if (!confirm('Supprimer ce bon de commande numérisé ?')) return;
@@ -2239,18 +2352,40 @@ const actions = {
   viewScannedReceipt(id) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);
     if (!scan) return toast('Document de livraison introuvable');
-    const isImage = String(scan.fileType || '').startsWith('image/');
-    const preview = isImage
-      ? `<img class="scan-preview" src="${escapeHtml(scan.fileData)}" alt="${escapeHtml(receiptDocLabel(scan.docType))} numérisé" />`
-      : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(scan.fileData)}" download="${escapeHtml(scan.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger / ouvrir le fichier</a></div>`;
+    const pages = scanPages(scan);
     const scanTypeLabel = scan.docType === 'temperature' ? 'Livraison complète' : receiptTypeLabel(scan.type);
+    const previews = pages.map((page, index) => {
+      const isImage = String(page.fileType || '').startsWith('image/');
+      const preview = isImage
+        ? `<img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Page ${index + 1} du document numérisé" />`
+        : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger / ouvrir le fichier</a></div>`;
+      return `
+        <section class="scan-page-card">
+          <div class="scan-page-header"><strong>Page ${index + 1}</strong><span class="muted">${escapeHtml(page.fileName || '')}</span></div>
+          ${preview}
+          <div class="form-actions scan-page-actions">
+            <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger cette page</a>
+            <button type="button" class="small danger-soft" data-action="deleteScannedReceiptPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
+          </div>
+        </section>
+      `;
+    }).join('') || '<p class="muted">Aucune page enregistrée.</p>';
     openModal(`${receiptDocLabel(scan.docType)} · ${scanTypeLabel}`, `
       <div class="scan-modal-content">
-        <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(scanTypeLabel)}<br><strong>Document :</strong> ${escapeHtml(receiptDocLabel(scan.docType))}<br><strong>Fichier :</strong> ${escapeHtml(scan.fileName || '-')}</p>
-        <div class="form-actions"><a class="download-link" href="${escapeHtml(scan.fileData)}" download="${escapeHtml(scan.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger</a><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
-        ${preview}
+        <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(scanTypeLabel)}<br><strong>Document :</strong> ${escapeHtml(receiptDocLabel(scan.docType))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
+        <div class="form-actions"><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
+        <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  deleteScannedReceiptPage(id, pageId) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    if (!scan) return toast('Document de livraison introuvable');
+    if (!confirm('Supprimer cette page du document ?')) return;
+    const pages = scanPages(scan).filter(page => page.id !== pageId);
+    if (!pages.length) state.scannedReceipts = (state.scannedReceipts || []).filter(item => item.id !== id);
+    else scan.pages = pages;
+    saveState(); closeModal(); render(); toast('Page supprimée');
   },
   deleteScannedReceipt(id) {
     if (!confirm('Supprimer ce document de livraison numérisé ?')) return;
@@ -2670,8 +2805,8 @@ function buildCsvDatasets() {
     })),
     lowStock: state.products.filter(p => stockByProduct(p.id) <= Number(p.minStock || 0)).map(p => ({ produit: p.name, stock: stockByProduct(p.id), stock_min: p.minStock, zone: getZone(p.storageZoneId)?.name || '' })),
     orders: state.orders.map(o => ({ reference: o.ref, date: o.date, fournisseur: getSupplier(o.supplierId)?.name || '', date_prevue: o.expectedDate, statut: o.status, lignes: (o.lines || []).length })),
-    scanned_orders: (state.scannedOrders || []).map(s => ({ date: s.date, jour: s.dayName, type: orderTypeLabel(s.type), fichier: s.fileName, numerise_le: s.scannedAt })),
-    scanned_receipts: (state.scannedReceipts || []).map(s => ({ date: s.date, jour: s.dayName, type: receiptTypeLabel(s.type), document: receiptDocLabel(s.docType), fichier: s.fileName, numerise_le: s.scannedAt })),
+    scanned_orders: (state.scannedOrders || []).map(s => ({ date: s.date, jour: s.dayName, type: orderTypeLabel(s.type), pages: scanPageCount(s), fichiers: scanPages(s).map(p => p.fileName).join(' | '), numerise_le: s.scannedAt })),
+    scanned_receipts: (state.scannedReceipts || []).map(s => ({ date: s.date, jour: s.dayName, type: receiptTypeLabel(s.type), document: receiptDocLabel(s.docType), pages: scanPageCount(s), fichiers: scanPages(s).map(p => p.fileName).join(' | '), numerise_le: s.scannedAt })),
     receipts: state.receipts.map(r => ({ reference: r.ref, date: r.date, fournisseur: getSupplier(r.supplierId)?.name || '', commande: state.orders.find(o => o.id === r.orderId)?.ref || '', lignes: (r.lines || []).length, note: r.note })),
     movements: state.movements.map(m => ({ date: m.date, type: m.type, produit: getProduct(m.productId)?.name || '', quantite: m.qty, depuis: getZone(m.fromZoneId)?.name || '', vers: getZone(m.toZoneId)?.name || '', lot: m.batch, dlc: m.dlc, note: m.note })),
     inventories: state.inventorySessions.flatMap(s => (s.lines || []).map(line => ({ date: s.date, jour: s.dayName, type: inventoryTypeLabel(s.type), reference: getProduct(line.productId)?.sku || '', produit: getProduct(line.productId)?.name || '', conditionnement: getProduct(line.productId)?.packageSize || '', stock_theorique: line.expectedQty, quantite_comptee: line.countedQty, ecart: line.diff, unite: line.unit, note: line.note }))),
@@ -2705,7 +2840,7 @@ function importJson(file) {
   reader.onload = () => {
     try {
       const data = JSON.parse(reader.result);
-      state = ensureInventoryCatalog({ ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) }, scannedOrders: data.scannedOrders || [], scannedReceipts: data.scannedReceipts || [], inventorySessions: data.inventorySessions || [], monthEndSessions: data.monthEndSessions || [], products: (data.products || []).map(migrateProduct) });
+      state = normalizeState({ ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) }, scannedOrders: data.scannedOrders || [], scannedReceipts: data.scannedReceipts || [], inventorySessions: data.inventorySessions || [], monthEndSessions: data.monthEndSessions || [], products: (data.products || []).map(migrateProduct) });
       saveState(); render(); toast('Sauvegarde importée');
     } catch (error) {
       toast('Fichier de sauvegarde invalide');
@@ -2716,11 +2851,20 @@ function importJson(file) {
 
 document.querySelector('#modalClose').addEventListener('click', closeModal);
 document.querySelector('#modal').addEventListener('click', event => { if (event.target.id === 'modal') closeModal(); });
+document.querySelector('#modal').addEventListener('click', event => {
+  const actionEl = event.target.closest?.('[data-action]');
+  if (!actionEl) return;
+  const action = actionEl.dataset.action;
+  const id = actionEl.dataset.id;
+  const type = actionEl.dataset.type;
+  const doc = actionEl.dataset.doc;
+  actions[action]?.(id, type, doc);
+});
 document.addEventListener('click', event => { if (event.target.id === 'modalCancel') closeModal(); });
 document.querySelector('#btnExportJson').addEventListener('click', downloadJson);
 document.querySelector('#importJson').addEventListener('change', event => { if (event.target.files[0]) importJson(event.target.files[0]); });
-document.querySelector('#btnSeed').addEventListener('click', seedData);
-document.querySelector('#btnReset').addEventListener('click', resetData);
+document.querySelector('#btnSeed')?.addEventListener('click', seedData);
+document.querySelector('#btnReset')?.addEventListener('click', resetData);
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.warn));

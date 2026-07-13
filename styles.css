@@ -482,3 +482,36 @@ button:disabled, .file-label:disabled {
   color: var(--muted);
   font-size: 13px;
 }
+
+
+/* v1.28 - numérisation multipage des bons de commande et bons de livraison */
+.scan-pages-list {
+  display: grid;
+  gap: 20px;
+  margin-top: 16px;
+}
+.scan-page-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 14px;
+  background: #fff;
+}
+.scan-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.scan-page-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.scan-modal-content .scan-preview {
+  max-height: 78vh;
+}
+@media (max-width: 700px) {
+  .scan-page-card { padding: 10px; }
+  .scan-page-actions .download-link,
+  .scan-page-actions button { width: 100%; }
+}
