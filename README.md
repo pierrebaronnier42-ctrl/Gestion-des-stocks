@@ -172,3 +172,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Saisie inventaire améliorée : la touche Suivant / Entrée passe directement à la quantité du produit suivant.
 - Les champs Note optionnelle sont ignorés pendant l’avancement rapide.
 - Cache GitHub Pages mis à jour en v1.37.
+
+
+## Version 1.38
+- Correction tablette : la touche Suivant dans la saisie d'inventaire passe directement à la quantité suivante et ignore la note optionnelle.

@@ -757,19 +757,39 @@ function bindPageEvents() {
   }
 
   const inventoryCountInputs = Array.from(document.querySelectorAll('[data-count]'));
+  let lastInventoryCountFocus = null;
+  function focusNextInventoryCount(index) {
+    const nextInput = inventoryCountInputs[index + 1];
+    if (nextInput) {
+      nextInput.focus({ preventScroll: true });
+      if (typeof nextInput.select === 'function') nextInput.select();
+    } else {
+      const saveButton = document.querySelector('[data-action="saveInventorySession"]');
+      if (saveButton) saveButton.focus({ preventScroll: true });
+    }
+  }
   inventoryCountInputs.forEach((input, index) => {
-    input.addEventListener('keydown', event => {
-      if (event.key !== 'Enter') return;
-      event.preventDefault();
-      const nextInput = inventoryCountInputs[index + 1];
-      if (nextInput) {
-        nextInput.focus({ preventScroll: true });
-        if (typeof nextInput.select === 'function') nextInput.select();
-      } else {
-        const saveButton = document.querySelector('[data-action="saveInventorySession"]');
-        if (saveButton) saveButton.focus({ preventScroll: true });
-      }
+    input.setAttribute('enterkeyhint', index === inventoryCountInputs.length - 1 ? 'done' : 'next');
+    input.addEventListener('focus', () => {
+      lastInventoryCountFocus = { index, at: Date.now() };
     });
+    input.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== 'NumpadEnter' && event.key !== 'Tab') return;
+      event.preventDefault();
+      focusNextInventoryCount(index);
+    });
+  });
+  document.querySelectorAll('[data-inventory-note]').forEach(noteInput => {
+    noteInput.setAttribute('tabindex', '-1');
+    noteInput.addEventListener('focus', () => {
+      if (!lastInventoryCountFocus || Date.now() - lastInventoryCountFocus.at > 800) return;
+      // Sur tablette, la touche « Suivant » peut utiliser l'ordre naturel du tableau
+      // et aller sur la note. On force alors le passage à la quantité suivante.
+      focusNextInventoryCount(lastInventoryCountFocus.index);
+    });
+  });
+  document.querySelectorAll('.order-actions button').forEach(button => {
+    button.setAttribute('tabindex', '-1');
   });
 
   const orderScanInput = document.querySelector('#orderScanInput');
@@ -2708,10 +2728,10 @@ function renderInventory() {
         <td>${number(theoretical)} ${escapeHtml(p.unit || '')}</td>
         <td><input class="count-input" data-count="${p.id}" type="number" step="0.01" min="0" inputmode="decimal" enterkeyhint="next" value="${escapeHtml(countValue)}" placeholder="Quantité" /></td>
         <td>${escapeHtml(p.unit || '')}</td>
-        <td><input data-inventory-note="${p.id}" value="${escapeHtml(noteValue)}" placeholder="Note optionnelle" /></td>
+        <td><input data-inventory-note="${p.id}" tabindex="-1" value="${escapeHtml(noteValue)}" placeholder="Note optionnelle" /></td>
         <td class="actions order-actions">
-          <button type="button" class="small secondary" data-action="moveInventoryProduct" data-id="${p.id}" data-type="up" ${index === 0 ? 'disabled' : ''}>↑</button>
-          <button type="button" class="small secondary" data-action="moveInventoryProduct" data-id="${p.id}" data-type="down" ${index === selectedProducts.length - 1 ? 'disabled' : ''}>↓</button>
+          <button type="button" class="small secondary" tabindex="-1" data-action="moveInventoryProduct" data-id="${p.id}" data-type="up" ${index === 0 ? 'disabled' : ''}>↑</button>
+          <button type="button" class="small secondary" tabindex="-1" data-action="moveInventoryProduct" data-id="${p.id}" data-type="down" ${index === selectedProducts.length - 1 ? 'disabled' : ''}>↓</button>
         </td>
       </tr>
     `;
