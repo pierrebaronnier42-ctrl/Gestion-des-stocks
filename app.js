@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.31.0-pdf-multipage-crop';
+const APP_VERSION = '1.32.0-manual-crop-selection';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -1445,20 +1445,30 @@ function autoCropImageDataUrl(dataUrl) {
 
 function cropModalHtml(page) {
   return formActions(`
-    <p class="muted">Indique le pourcentage à retirer sur chaque bord. Le résultat est prévisualisé à droite avant enregistrement.</p>
-    <div class="form-grid">
-      <label>Haut (%)<input id="cropTop" type="number" min="0" max="45" step="1" value="0" /></label>
-      <label>Bas (%)<input id="cropBottom" type="number" min="0" max="45" step="1" value="0" /></label>
-      <label>Gauche (%)<input id="cropLeft" type="number" min="0" max="45" step="1" value="0" /></label>
-      <label>Droite (%)<input id="cropRight" type="number" min="0" max="45" step="1" value="0" /></label>
-    </div>
-    <div class="scan-crop-preview-grid">
+    <p class="muted">Trace un cadre sur l’image pour sélectionner uniquement la zone du document à garder. Tu peux ensuite déplacer le cadre ou tirer les poignées pour l’ajuster.</p>
+    <div class="crop-selection-grid">
       <div>
-        <p class="muted"><strong>Image originale</strong></p>
-        <img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Image originale" />
+        <p class="muted"><strong>Zone à garder</strong></p>
+        <div id="cropStage" class="crop-selection-stage">
+          <img id="cropSourceImage" src="${escapeHtml(page.fileData)}" alt="Image à rogner" draggable="false" />
+          <div id="cropSelection" class="crop-selection-box" aria-label="Zone sélectionnée">
+            <span class="crop-handle crop-handle-nw" data-handle="nw"></span>
+            <span class="crop-handle crop-handle-ne" data-handle="ne"></span>
+            <span class="crop-handle crop-handle-sw" data-handle="sw"></span>
+            <span class="crop-handle crop-handle-se" data-handle="se"></span>
+          </div>
+        </div>
+        <div class="crop-quick-actions">
+          <button type="button" class="secondary small" id="cropFullPage">Page entière</button>
+          <button type="button" class="secondary small" id="cropCenteredPage">Cadre centré</button>
+        </div>
+        <input id="cropTop" type="hidden" value="0" />
+        <input id="cropBottom" type="hidden" value="0" />
+        <input id="cropLeft" type="hidden" value="0" />
+        <input id="cropRight" type="hidden" value="0" />
       </div>
       <div>
-        <p class="muted"><strong>Résultat après rognage</strong></p>
+        <p class="muted"><strong>Aperçu après rognage</strong></p>
         <img id="cropPreviewImage" class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Résultat du rognage" />
       </div>
     </div>
@@ -1475,10 +1485,50 @@ function cropValuesFromModal() {
 }
 
 function bindCropPreview(sourceDataUrl) {
+  const stage = document.querySelector('#cropStage');
+  const sourceImage = document.querySelector('#cropSourceImage');
+  const selection = document.querySelector('#cropSelection');
   const preview = document.querySelector('#cropPreviewImage');
-  if (!preview) return;
+  if (!stage || !sourceImage || !selection || !preview) return;
+
+  let rect = { x: 5, y: 5, w: 90, h: 90 };
+  let active = null;
   let timer = null;
-  const update = () => {
+  const minSize = 6;
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+  const pointFromEvent = event => {
+    const bounds = stage.getBoundingClientRect();
+    return {
+      x: clamp(((event.clientX - bounds.left) / bounds.width) * 100, 0, 100),
+      y: clamp(((event.clientY - bounds.top) / bounds.height) * 100, 0, 100)
+    };
+  };
+
+  const normalizeRect = next => {
+    let x = clamp(Number(next.x || 0), 0, 100);
+    let y = clamp(Number(next.y || 0), 0, 100);
+    let w = clamp(Number(next.w || minSize), minSize, 100);
+    let h = clamp(Number(next.h || minSize), minSize, 100);
+    if (x + w > 100) x = 100 - w;
+    if (y + h > 100) y = 100 - h;
+    return { x, y, w, h };
+  };
+
+  const setRect = next => {
+    rect = normalizeRect(next);
+    selection.style.left = rect.x + '%';
+    selection.style.top = rect.y + '%';
+    selection.style.width = rect.w + '%';
+    selection.style.height = rect.h + '%';
+    document.querySelector('#cropLeft').value = rect.x.toFixed(3);
+    document.querySelector('#cropTop').value = rect.y.toFixed(3);
+    document.querySelector('#cropRight').value = (100 - rect.x - rect.w).toFixed(3);
+    document.querySelector('#cropBottom').value = (100 - rect.y - rect.h).toFixed(3);
+    updatePreview();
+  };
+
+  const updatePreview = () => {
     clearTimeout(timer);
     timer = setTimeout(async () => {
       try {
@@ -1489,10 +1539,83 @@ function bindCropPreview(sourceDataUrl) {
       } finally {
         preview.classList.remove('loading');
       }
-    }, 120);
+    }, 140);
   };
-  ['#cropTop', '#cropBottom', '#cropLeft', '#cropRight'].forEach(selector => document.querySelector(selector)?.addEventListener('input', update));
-  update();
+
+  const startDraw = event => {
+    if (event.target.closest('.crop-handle') || event.target === selection) return;
+    event.preventDefault();
+    const p = pointFromEvent(event);
+    active = { mode: 'draw', start: p };
+    setRect({ x: p.x, y: p.y, w: minSize, h: minSize });
+    stage.setPointerCapture?.(event.pointerId);
+  };
+
+  const startMove = event => {
+    if (event.target.closest('.crop-handle')) return;
+    event.preventDefault();
+    const p = pointFromEvent(event);
+    active = { mode: 'move', start: p, original: { ...rect } };
+    stage.setPointerCapture?.(event.pointerId);
+  };
+
+  const startResize = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    const p = pointFromEvent(event);
+    active = { mode: 'resize', handle: event.target.dataset.handle, start: p, original: { ...rect } };
+    stage.setPointerCapture?.(event.pointerId);
+  };
+
+  const onMove = event => {
+    if (!active) return;
+    event.preventDefault();
+    const p = pointFromEvent(event);
+    if (active.mode === 'draw') {
+      const x1 = Math.min(active.start.x, p.x);
+      const y1 = Math.min(active.start.y, p.y);
+      const x2 = Math.max(active.start.x, p.x);
+      const y2 = Math.max(active.start.y, p.y);
+      setRect({ x: x1, y: y1, w: Math.max(minSize, x2 - x1), h: Math.max(minSize, y2 - y1) });
+    }
+    if (active.mode === 'move') {
+      setRect({
+        x: active.original.x + (p.x - active.start.x),
+        y: active.original.y + (p.y - active.start.y),
+        w: active.original.w,
+        h: active.original.h
+      });
+    }
+    if (active.mode === 'resize') {
+      const original = active.original;
+      let left = original.x;
+      let top = original.y;
+      let right = original.x + original.w;
+      let bottom = original.y + original.h;
+      if (active.handle.includes('w')) left = clamp(p.x, 0, right - minSize);
+      if (active.handle.includes('e')) right = clamp(p.x, left + minSize, 100);
+      if (active.handle.includes('n')) top = clamp(p.y, 0, bottom - minSize);
+      if (active.handle.includes('s')) bottom = clamp(p.y, top + minSize, 100);
+      setRect({ x: left, y: top, w: right - left, h: bottom - top });
+    }
+  };
+
+  const onEnd = event => {
+    if (!active) return;
+    active = null;
+    stage.releasePointerCapture?.(event.pointerId);
+  };
+
+  stage.addEventListener('pointerdown', startDraw);
+  selection.addEventListener('pointerdown', startMove);
+  selection.querySelectorAll('.crop-handle').forEach(handle => handle.addEventListener('pointerdown', startResize));
+  stage.addEventListener('pointermove', onMove);
+  stage.addEventListener('pointerup', onEnd);
+  stage.addEventListener('pointercancel', onEnd);
+  document.querySelector('#cropFullPage')?.addEventListener('click', () => setRect({ x: 0, y: 0, w: 100, h: 100 }));
+  document.querySelector('#cropCenteredPage')?.addEventListener('click', () => setRect({ x: 7, y: 5, w: 86, h: 90 }));
+  sourceImage.onload = () => setRect(rect);
+  setRect(rect);
 }
 
 function getJsPdfConstructor() {
@@ -2834,7 +2957,7 @@ const actions = {
           ${preview}
           <div class="form-actions scan-page-actions">
             <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger cette page</a>
-            ${isImage ? `<button type="button" class="small secondary" data-action="autoCropOrderPage" data-id="${scan.id}" data-type="${page.id}">Rogner auto</button><button type="button" class="small secondary" data-action="openOrderPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
+            ${isImage ? `<button type="button" class="small secondary" data-action="openOrderPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
             <button type="button" class="small danger-soft" data-action="deleteScannedOrderPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
           </div>
         </section>
@@ -2845,7 +2968,6 @@ const actions = {
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(orderTypeLabel(scan.type))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
         <div class="form-actions">
           <button type="button" data-action="downloadScannedOrderPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
-          <button type="button" data-action="autoCropAllOrderPages" data-id="${scan.id}" class="secondary">Rogner auto toutes les pages</button>
           <button type="button" id="modalCancel" class="secondary">Fermer</button>
         </div>
         <div class="scan-pages-list">${previews}</div>
@@ -2954,7 +3076,7 @@ const actions = {
           ${preview}
           <div class="form-actions scan-page-actions">
             <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger cette page</a>
-            ${isImage ? `<button type="button" class="small secondary" data-action="autoCropReceiptPage" data-id="${scan.id}" data-type="${page.id}">Rogner auto</button><button type="button" class="small secondary" data-action="openReceiptPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
+            ${isImage ? `<button type="button" class="small secondary" data-action="openReceiptPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
             <button type="button" class="small danger-soft" data-action="deleteScannedReceiptPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
           </div>
         </section>
@@ -2965,7 +3087,6 @@ const actions = {
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(scanTypeLabel)}<br><strong>Document :</strong> ${escapeHtml(receiptDocLabel(scan.docType))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
         <div class="form-actions">
           <button type="button" data-action="downloadScannedReceiptPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
-          <button type="button" data-action="autoCropAllReceiptPages" data-id="${scan.id}" class="secondary">Rogner auto toutes les pages</button>
           <button type="button" id="modalCancel" class="secondary">Fermer</button>
         </div>
         <div class="scan-pages-list">${previews}</div>
