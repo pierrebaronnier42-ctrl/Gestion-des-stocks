@@ -885,6 +885,177 @@ function inventoryTypeBadges(product) {
   return productInventoryTypes(product).map(type => `<span class="badge info">${escapeHtml(inventoryTypeLabel(type))}</span>`).join(' ');
 }
 
+
+function inventorySlotDefinition(slot) {
+  return INVENTORY_SLOT_DEFINITIONS.find(def => def.id === slot) || INVENTORY_SLOT_DEFINITIONS[0];
+}
+
+function inventorySlotSelectOptions(selectedSlot) {
+  return INVENTORY_SLOT_DEFINITIONS.map(def => `<option value="${escapeHtml(def.id)}" ${def.id === selectedSlot ? 'selected' : ''}>${escapeHtml(def.label)}</option>`).join('');
+}
+
+function dateForInventorySlot(slot) {
+  const def = inventorySlotDefinition(slot);
+  const start = parseDate(today());
+  const wantedDay = def.day === 'monday' ? 1 : def.day === 'wednesday' ? 3 : 5;
+  for (let i = 0; i < 28; i++) {
+    const d = addDays(start, i);
+    if (d.getDay() !== wantedDay) continue;
+    const value = formatDateInput(d);
+    if (def.type === 'hub' && !isHubWeek(value)) continue;
+    return value;
+  }
+  return today();
+}
+
+function productsForInventorySlot(slot, includeInactive = false) {
+  const def = inventorySlotDefinition(slot);
+  return state.products
+    .filter(p => includeInactive || p.active !== false)
+    .filter(p => productInventorySlots(p).includes(slot))
+    .sort((a, b) => {
+      const oa = productInventoryOrder(a, slot);
+      const ob = productInventoryOrder(b, slot);
+      if (oa !== ob) return oa - ob;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' });
+    });
+}
+
+function availableProductsForInventorySlot(slot) {
+  return state.products
+    .filter(p => p.active !== false)
+    .filter(p => !productInventorySlots(p).includes(slot))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' }));
+}
+
+function inventorySlotDuplicateOrders(slot) {
+  const groups = new Map();
+  productsForInventorySlot(slot).forEach(product => {
+    const order = Number(product.inventoryOrders?.[slot] || 0);
+    if (!order) return;
+    const key = String(order);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(product);
+  });
+  return [...groups.entries()].filter(([, items]) => items.length > 1);
+}
+
+function parseInventoryImportLines(rawText) {
+  return String(rawText || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const normalizedLine = line.replace(/\s+/g, ' ');
+      const skuMatch = normalizedLine.match(/(\d{5}\.\d{3})/);
+      const zoneMatch = normalizedLine.match(/^(Négatif|Negatif|Positif|Sec)\s+/i);
+      let sku = skuMatch ? skuMatch[1] : '';
+      let name = normalizedLine;
+      if (sku) {
+        name = normalizedLine.slice(normalizedLine.indexOf(sku) + sku.length).trim();
+        name = name.replace(/^[-–—:;\s]+/, '');
+        // Supprime les colonnes numériques typiques des bons de commande pour garder une désignation lisible.
+        name = name.replace(/\s+\d+[\d\s,.]*\s+(CT|PN|PC|SA)\b.*$/i, match => {
+          const pkg = match.trim().split(/\s+/).slice(0, 2).join(' ');
+          return ' ' + pkg;
+        }).trim();
+      }
+      if (zoneMatch && name.toLowerCase().startsWith(zoneMatch[1].toLowerCase())) {
+        name = name.slice(zoneMatch[0].length).trim();
+      }
+      return {
+        raw: normalizedLine,
+        sku,
+        name: name || normalizedLine,
+        zoneLabel: zoneMatch ? zoneMatch[1].replace('Negatif', 'Négatif') : '',
+        order: index + 1
+      };
+    });
+}
+
+function zoneIdFromImportLabel(label) {
+  const value = String(label || '').toLowerCase();
+  if (value.includes('négatif') || value.includes('negatif')) return state.zones.find(z => String(z.name || '').toLowerCase().includes('négative') || String(z.name || '').toLowerCase().includes('négatif') || z.id === 'zone-negatif')?.id || '';
+  if (value.includes('positif')) return state.zones.find(z => String(z.name || '').toLowerCase().includes('positive') || String(z.name || '').toLowerCase().includes('positif') || z.id === 'zone-positif')?.id || '';
+  if (value.includes('sec')) return state.zones.find(z => String(z.name || '').toLowerCase().includes('sec') || z.id === 'zone-sec')?.id || '';
+  return '';
+}
+
+function findProductForImportedLine(line) {
+  if (line.sku) {
+    const bySku = state.products.find(p => String(p.sku || '').trim() === line.sku);
+    if (bySku) return bySku;
+  }
+  const cleanName = String(line.name || '').toLowerCase().trim();
+  if (!cleanName) return null;
+  return state.products.find(p => String(p.name || '').toLowerCase().trim() === cleanName) || null;
+}
+
+function ensureProductInInventorySlot(product, slot, order) {
+  if (!product) return;
+  const slots = new Set(productInventorySlots(product));
+  slots.add(slot);
+  product.inventorySlots = [...slots];
+  product.inventoryOrders = { ...(product.inventoryOrders || {}), [slot]: order };
+  if (slot.includes('hub')) product.category = 'hub';
+  if (product.active === false) product.active = true;
+}
+
+function createProductFromImportedLine(line, slot, order) {
+  const def = inventorySlotDefinition(slot);
+  const product = migrateProduct({
+    id: uid(),
+    sku: line.sku || '',
+    name: line.name || line.raw || 'Nouveau produit',
+    category: def.type === 'hub' ? 'hub' : def.type === 'ultra' ? 'fresh' : 'general',
+    unit: 'colis',
+    packageSize: '',
+    minStock: 0,
+    lastPrice: 0,
+    supplierId: '',
+    storageZoneId: zoneIdFromImportLabel(line.zoneLabel),
+    inventorySlots: [slot],
+    inventoryOrders: { [slot]: order },
+    active: true,
+    createdAt: today()
+  });
+  state.products.push(product);
+  return product;
+}
+
+function applyImportedInventoryList(slot, mode) {
+  const raw = document.querySelector('#inventoryImportText')?.value || '';
+  const lines = parseInventoryImportLines(raw);
+  if (!lines.length) return toast('Colle au moins une ligne de bon de commande');
+  if (mode === 'replace' && !confirm('Remplacer complètement la liste de ce jour/type par le texte collé ?')) return;
+  cacheCurrentInventoryDraft(selectedInventorySlot?.date || today(), selectedInventorySlot?.type || 'general');
+  if (mode === 'replace') {
+    state.products.forEach(product => {
+      if (!productInventorySlots(product).includes(slot)) return;
+      product.inventorySlots = productInventorySlots(product).filter(item => item !== slot);
+      if (product.inventoryOrders) delete product.inventoryOrders[slot];
+    });
+  }
+  let created = 0;
+  let added = 0;
+  const startOrder = mode === 'append' ? productsForInventorySlot(slot).length : 0;
+  lines.forEach((line, index) => {
+    const order = startOrder + index + 1;
+    let product = findProductForImportedLine(line);
+    if (!product) {
+      product = createProductFromImportedLine(line, slot, order);
+      created++;
+    } else {
+      ensureProductInInventorySlot(product, slot, order);
+      added++;
+    }
+  });
+  selectedInventorySlot = { date: dateForInventorySlot(slot), type: inventorySlotDefinition(slot).type };
+  saveState();
+  render();
+  toast(`${mode === 'replace' ? 'Liste remplacée' : 'Produits ajoutés'} · ${lines.length} ligne(s), ${created} création(s)`);
+}
+
 function productsForInventory(type, dateValue) {
   const slot = inventorySlotKey(dateValue, type);
   return state.products
@@ -1778,6 +1949,111 @@ function renderDashboard() {
   `;
 }
 
+
+function renderInventoryListManager() {
+  const selected = selectedInventorySlot || nextPendingInventorySlot();
+  const selectedSlot = inventorySlotKey(selected.date, selected.type) || 'monday_general';
+  const def = inventorySlotDefinition(selectedSlot);
+  const rows = productsForInventorySlot(selectedSlot);
+  const duplicates = inventorySlotDuplicateOrders(selectedSlot);
+  const query = currentFilter.trim().toLowerCase();
+  const visibleRows = rows.filter(product => !query || productSearchText(product).includes(query));
+  const available = availableProductsForInventorySlot(selectedSlot);
+  const availableOptions = available.map(product => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.sku || 'Sans réf.')} · ${escapeHtml(product.name || '')}</option>`).join('') || '<option value="">Aucun produit disponible</option>';
+  const duplicateAlert = duplicates.length ? `
+    <div class="alert warning" style="margin-top:12px;">
+      <strong>Attention : doublon de numéro d’ordre.</strong><br>
+      ${duplicates.map(([order, items]) => `N° ${escapeHtml(order)} : ${items.map(item => escapeHtml(item.name)).join(' / ')}`).join('<br>')}
+    </div>
+  ` : '';
+  const tableRows = visibleRows.map((product, index) => {
+    const order = Number(product.inventoryOrders?.[selectedSlot] || index + 1);
+    const duplicate = duplicates.some(([, items]) => items.some(item => item.id === product.id));
+    return `
+      <tr class="${duplicate ? 'duplicate-row' : ''}">
+        <td><input class="mini-input" data-inventory-list-order="${escapeHtml(product.id)}" type="number" min="1" step="1" value="${escapeHtml(order)}" /></td>
+        <td><strong>${escapeHtml(product.name || '')}</strong><br><span class="muted">${escapeHtml(product.sku || 'Sans réf.')} · ${escapeHtml(product.packageSize || '')}</span></td>
+        <td>${escapeHtml(productCategoryLabel(product) || '-')}</td>
+        <td>${escapeHtml(getZone(product.storageZoneId)?.name || '-')}</td>
+        <td class="actions">
+          <button class="small secondary" data-action="moveInventoryListProduct" data-id="${escapeHtml(product.id)}" data-type="up" ${index === 0 ? 'disabled' : ''}>↑</button>
+          <button class="small secondary" data-action="moveInventoryListProduct" data-id="${escapeHtml(product.id)}" data-type="down" ${index === visibleRows.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="small danger-soft" data-action="removeProductFromInventoryList" data-id="${escapeHtml(product.id)}">Retirer</button>
+        </td>
+      </tr>
+    `;
+  }).join('') || `<tr><td colspan="5" class="empty">Aucun produit dans cette liste ou aucun résultat de recherche.</td></tr>`;
+
+  return `
+    <div class="card subpage-heading">
+      <div class="toolbar">
+        <div>
+          <p class="eyebrow">Sous-page Inventaire</p>
+          <h3>Mise à jour rapide des listes d’inventaire</h3>
+          <p class="muted">Chaque jour et chaque type possède sa propre liste : lundi, mercredi, vendredi, général, ultra frais et HUB.</p>
+        </div>
+        <div class="toolbar-right">
+          <button data-action="openInventoryEntry" class="secondary">Retour à la saisie</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar">
+        <div>
+          <h3>Liste à modifier</h3>
+          <p class="muted">Liste actuelle : ${escapeHtml(def.label)} · ${rows.length} produit(s)</p>
+        </div>
+        <div class="toolbar-right">
+          <button data-action="loadInventoryListManagerSlot" class="secondary">Charger</button>
+          <button data-action="saveInventoryListOrder" class="success">Enregistrer l’ordre</button>
+        </div>
+      </div>
+      <div class="form-grid compact-grid">
+        <label>Jour / type<select id="inventoryListSlot">${inventorySlotSelectOptions(selectedSlot)}</select></label>
+        <label class="wide">Recherche<input data-search value="${escapeHtml(currentFilter)}" placeholder="Référence, produit, catégorie, zone..." /></label>
+      </div>
+      ${duplicateAlert}
+    </div>
+
+    <div class="grid grid-2" style="margin-top:18px;">
+      <div class="card">
+        <div class="toolbar"><h3>Ajouter rapidement un produit</h3><span class="muted">Ajout sans changer les autres jours</span></div>
+        <div class="form-grid compact-grid">
+          <label class="wide">Produit<select id="inventoryListAddProduct">${availableOptions}</select></label>
+          <label>N° ordre<input id="inventoryListAddOrder" type="number" min="1" step="1" placeholder="Auto" /></label>
+        </div>
+        <div class="form-actions">
+          <button data-action="addProductToInventoryList" class="success">Ajouter à cette liste</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="toolbar"><h3>Actions rapides</h3><span class="muted">Ordre indépendant par jour</span></div>
+        <div class="form-actions wrap-actions">
+          <button data-action="normalizeInventoryListOrder" class="secondary">Renuméroter 1, 2, 3...</button>
+          <button data-action="resetInventoryListDefaultOrder" class="secondary">Ordre bon de commande d’origine</button>
+          <button data-action="saveInventoryListOrder" class="success">Enregistrer l’ordre</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar"><h3>Importer / remplacer depuis un bon de commande</h3><span class="badge info">Copier-coller</span></div>
+      <p class="muted">Colle les lignes du bon de commande dans l’ordre souhaité. Le logiciel retrouve les produits par référence. Les références inconnues sont créées automatiquement puis ajoutées à cette liste.</p>
+      <textarea id="inventoryImportText" rows="8" placeholder="Exemple :\n00005.312 VIANDE 10/1 300 CT\n00006.246 VIANDE 4/1 120 CT\n..."></textarea>
+      <div class="form-actions wrap-actions">
+        <button data-action="appendInventoryImportList" class="secondary">Ajouter à la fin</button>
+        <button data-action="replaceInventoryImportList" class="danger-soft">Remplacer la liste complète</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar"><h3>Produits de la liste</h3><span class="muted">Modifie les numéros puis clique sur Enregistrer l’ordre</span></div>
+      <div class="table-wrap"><table><thead><tr><th>N° ordre</th><th>Produit</th><th>Catégorie</th><th>Zone</th><th>Actions</th></tr></thead><tbody>${tableRows}</tbody></table></div>
+    </div>
+  `;
+}
+
 function renderInventory() {
   const schedule = generateInventorySchedule(state.settings.inventoryProjectionWeeks || 8);
   const selected = selectedInventorySlot || nextPendingInventorySlot();
@@ -1887,6 +2163,9 @@ function renderInventory() {
     `;
   }
 
+  if (inventorySubPage === 'manageLists') {
+    return renderInventoryListManager();
+  }
 
   if (inventorySubPage === 'forecast') {
     return `
@@ -1922,6 +2201,7 @@ function renderInventory() {
           <p class="muted">La page principale sert uniquement à saisir et consulter les inventaires. Le prévisionnel est dans sa sous-page dédiée.</p>
         </div>
         <div class="toolbar-right">
+          <button data-action="openInventoryListManager" class="secondary">Mise à jour des listes</button>
           <button data-action="openInventoryForecast" class="secondary">Prévisionnel des inventaires</button>
         </div>
       </div>
@@ -3288,6 +3568,89 @@ const actions = {
     inventorySubPage = 'entry';
     inventoryFocusMode = false;
     render();
+  },
+  openInventoryListManager() {
+    inventorySubPage = 'manageLists';
+    inventoryFocusMode = false;
+    render();
+  },
+  loadInventoryListManagerSlot() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    const def = inventorySlotDefinition(slot);
+    selectedInventorySlot = { date: dateForInventorySlot(slot), type: def.type };
+    inventorySubPage = 'manageLists';
+    render();
+  },
+  saveInventoryListOrder() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || inventorySlotKey(selectedInventorySlot?.date, selectedInventorySlot?.type) || 'monday_general';
+    document.querySelectorAll('[data-inventory-list-order]').forEach(input => {
+      setProductInventoryOrder(input.dataset.inventoryListOrder, slot, Number(input.value || 0));
+    });
+    const duplicates = inventorySlotDuplicateOrders(slot);
+    saveState();
+    render();
+    toast(duplicates.length ? 'Ordre enregistré, mais doublon détecté' : 'Ordre enregistré');
+  },
+  normalizeInventoryListOrder() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || inventorySlotKey(selectedInventorySlot?.date, selectedInventorySlot?.type) || 'monday_general';
+    productsForInventorySlot(slot).forEach((product, index) => setProductInventoryOrder(product.id, slot, index + 1));
+    saveState();
+    render();
+    toast('Liste renumérotée');
+  },
+  resetInventoryListDefaultOrder() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || inventorySlotKey(selectedInventorySlot?.date, selectedInventorySlot?.type) || 'monday_general';
+    if (!confirm('Remettre l’ordre d’origine du bon de commande pour cette liste ?')) return;
+    productsForInventorySlot(slot, true).forEach((product, index) => {
+      const defaultOrder = defaultInventoryOrder(product.sku, slot);
+      setProductInventoryOrder(product.id, slot, defaultOrder || index + 1);
+    });
+    saveState();
+    render();
+    toast('Ordre d’origine rétabli');
+  },
+  addProductToInventoryList() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    const productId = document.querySelector('#inventoryListAddProduct')?.value;
+    const product = getProduct(productId);
+    if (!product) return toast('Choisis un produit à ajouter');
+    const requestedOrder = Number(document.querySelector('#inventoryListAddOrder')?.value || 0);
+    const order = requestedOrder > 0 ? requestedOrder : productsForInventorySlot(slot).length + 1;
+    ensureProductInInventorySlot(product, slot, order);
+    saveState();
+    render();
+    toast('Produit ajouté à la liste');
+  },
+  removeProductFromInventoryList(productId) {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    const product = getProduct(productId);
+    if (!product) return;
+    if (!confirm(`Retirer "${product.name}" uniquement de cette liste d’inventaire ?`)) return;
+    product.inventorySlots = productInventorySlots(product).filter(item => item !== slot);
+    if (product.inventoryOrders) delete product.inventoryOrders[slot];
+    saveState();
+    render();
+    toast('Produit retiré de cette liste');
+  },
+  moveInventoryListProduct(productId, direction) {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    const rows = productsForInventorySlot(slot);
+    const index = rows.findIndex(product => product.id === productId);
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (index < 0 || targetIndex < 0 || targetIndex >= rows.length) return;
+    rows.forEach((product, i) => setProductInventoryOrder(product.id, slot, i + 1));
+    setProductInventoryOrder(rows[index].id, slot, targetIndex + 1);
+    setProductInventoryOrder(rows[targetIndex].id, slot, index + 1);
+    saveState();
+    render();
+  },
+  appendInventoryImportList() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    applyImportedInventoryList(slot, 'append');
+  },
+  replaceInventoryImportList() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    applyImportedInventoryList(slot, 'replace');
   },
   selectInventorySlot(date, type) {
     selectedInventorySlot = { date, type };

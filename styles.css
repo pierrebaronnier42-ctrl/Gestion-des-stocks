@@ -710,3 +710,6 @@ button:disabled, .file-label:disabled {
 .missing-doc-panel .form-grid {
   margin-top: 12px;
 }
+.mini-input { width: 84px; min-width: 84px; }
+.wrap-actions { flex-wrap: wrap; justify-content: flex-start; }
+textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 160px; resize: vertical; }

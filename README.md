@@ -145,3 +145,13 @@ Si tu vois encore l'ancien texte “Les données sont stockées dans le navigate
 - Ajout du bloc « Ajouter un document manquant à une date » directement dans « Documents de livraison numérisés ».
 - Permet d’ajouter un BL ou un ticket température sur une date passée depuis la section des documents.
 - Mise à jour du cache GitHub Pages en v1.33.
+
+## Version v9
+
+Ajout d'une sous-page **Inventaire > Mise à jour des listes** :
+- modifier indépendamment les listes Lundi / Mercredi / Vendredi et Général / Ultra frais / HUB ;
+- changer rapidement les numéros d'ordre ;
+- ajouter ou retirer un produit d'une liste sans impacter les autres jours ;
+- copier-coller un bon de commande pour remplacer ou compléter une liste ;
+- création automatique des nouvelles références inconnues ;
+- alerte en cas de doublon de numéro d'ordre.
