@@ -166,3 +166,9 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Analyse des références du PDF, mise à jour de l’ordre du bon de commande, détection des nouveaux produits, des références absentes, des changements probables de référence et des changements de conditionnement.
 - Les nouveaux produits demandent une zone de stockage et un numéro de séquençage avant application.
 - Les références sont utilisées comme clé interne mais ne sont plus affichées dans la liste de saisie d’inventaire.
+
+
+## Version v12
+- Saisie inventaire améliorée : la touche Suivant / Entrée passe directement à la quantité du produit suivant.
+- Les champs Note optionnelle sont ignorés pendant l’avancement rapide.
+- Cache GitHub Pages mis à jour en v1.37.

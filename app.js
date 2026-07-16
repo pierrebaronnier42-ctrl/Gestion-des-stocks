@@ -755,6 +755,23 @@ function bindPageEvents() {
       render();
     });
   }
+
+  const inventoryCountInputs = Array.from(document.querySelectorAll('[data-count]'));
+  inventoryCountInputs.forEach((input, index) => {
+    input.addEventListener('keydown', event => {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      const nextInput = inventoryCountInputs[index + 1];
+      if (nextInput) {
+        nextInput.focus({ preventScroll: true });
+        if (typeof nextInput.select === 'function') nextInput.select();
+      } else {
+        const saveButton = document.querySelector('[data-action="saveInventorySession"]');
+        if (saveButton) saveButton.focus({ preventScroll: true });
+      }
+    });
+  });
+
   const orderScanInput = document.querySelector('#orderScanInput');
   if (orderScanInput) {
     orderScanInput.addEventListener('change', event => {
@@ -2689,7 +2706,7 @@ function renderInventory() {
         <td class="order-cell"><span class="badge info">${index + 1}</span></td>
         <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.category || '-')} · ${escapeHtml(p.packageSize || '')}</span></td>
         <td>${number(theoretical)} ${escapeHtml(p.unit || '')}</td>
-        <td><input class="count-input" data-count="${p.id}" type="number" step="0.01" min="0" inputmode="decimal" value="${escapeHtml(countValue)}" placeholder="Quantité" /></td>
+        <td><input class="count-input" data-count="${p.id}" type="number" step="0.01" min="0" inputmode="decimal" enterkeyhint="next" value="${escapeHtml(countValue)}" placeholder="Quantité" /></td>
         <td>${escapeHtml(p.unit || '')}</td>
         <td><input data-inventory-note="${p.id}" value="${escapeHtml(noteValue)}" placeholder="Note optionnelle" /></td>
         <td class="actions order-actions">
