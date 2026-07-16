@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.36.0-inventory-pdf-sync';
+const APP_VERSION = '1.39.0-inventory-order-scroll';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -131,6 +131,7 @@ let supabaseClient = null;
 let activeMultiPhotoScanner = null;
 let inventoryPhotoOcrDraft = { status: 'idle', progress: 0, message: '', pages: [], text: '', matched: 0, unknown: 0 };
 let inventoryPdfImportDraft = { status: 'idle', slot: '', fileName: '', lines: [], exact: [], replacements: [], newItems: [], missing: [], message: '' };
+let pendingInventoryScrollTarget = null;
 let cloudReady = false;
 let cloudSaveTimer = null;
 let isApplyingCloudState = false;
@@ -712,6 +713,28 @@ function render() {
   updateBrandLogo();
   document.body.classList.toggle('inventory-focus', currentPage === 'inventory' && inventoryFocusMode);
   bindPageEvents();
+  restoreInventoryScrollTarget();
+}
+
+function cssEscapeValue(value) {
+  const stringValue = String(value ?? '');
+  if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(stringValue);
+  return stringValue.replace(/[\\"']/g, '\\$&');
+}
+
+function restoreInventoryScrollTarget() {
+  if (!pendingInventoryScrollTarget || currentPage !== 'inventory') return;
+  const target = pendingInventoryScrollTarget;
+  pendingInventoryScrollTarget = null;
+  requestAnimationFrame(() => {
+    const row = document.querySelector(`[data-inventory-row="${cssEscapeValue(target.productId)}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+    row.classList.add('row-flash');
+    const button = row.querySelector(`[data-action="moveInventoryProduct"][data-type="${target.direction}"]`) || row.querySelector('[data-action="moveInventoryProduct"]');
+    if (button && !button.disabled) button.focus({ preventScroll: true });
+    setTimeout(() => row.classList.remove('row-flash'), 900);
+  });
 }
 
 function bindPageEvents() {
@@ -2722,7 +2745,7 @@ function renderInventory() {
     const countValue = draftLine.countedQty ?? oldLine?.countedQty ?? '';
     const noteValue = draftLine.note ?? oldLine?.note ?? '';
     return `
-      <tr>
+      <tr data-inventory-row="${escapeHtml(p.id)}">
         <td class="order-cell"><span class="badge info">${index + 1}</span></td>
         <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.category || '-')} · ${escapeHtml(p.packageSize || '')}</span></td>
         <td>${number(theoretical)} ${escapeHtml(p.unit || '')}</td>
@@ -4343,7 +4366,9 @@ const actions = {
     const target = rows[targetIndex];
     setProductInventoryOrder(current.id, slot, targetIndex + 1);
     setProductInventoryOrder(target.id, slot, index + 1);
-    saveState(); render();
+    pendingInventoryScrollTarget = { productId: current.id, direction };
+    saveState();
+    render();
   },
   resetInventoryOrder() {
     const selected = selectedInventorySlot || nextPendingInventorySlot();

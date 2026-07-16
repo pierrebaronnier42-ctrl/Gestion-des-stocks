@@ -728,3 +728,14 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
 .compact-table input, .compact-table select { min-width: 120px; }
 .compact-table .mini-input { min-width: 72px; width: 84px; }
 @media (max-width: 900px) { .compact-table input, .compact-table select { min-width: 160px; } }
+
+
+.row-flash {
+  outline: 3px solid rgba(37, 99, 235, 0.45);
+  outline-offset: -3px;
+  animation: rowFlash 0.9s ease-out;
+}
+@keyframes rowFlash {
+  0% { background: rgba(37, 99, 235, 0.14); }
+  100% { background: transparent; }
+}

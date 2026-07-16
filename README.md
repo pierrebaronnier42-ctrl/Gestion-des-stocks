@@ -176,3 +176,8 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 
 ## Version 1.38
 - Correction tablette : la touche Suivant dans la saisie d'inventaire passe directement à la quantité suivante et ignore la note optionnelle.
+
+
+## Version v14
+
+- Correction du déplacement manuel dans l'inventaire : après ↑/↓, la page reste centrée sur la ligne modifiée au lieu de remonter en haut.
