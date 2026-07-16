@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.40.0-inventory-order-scroll-mobile';
+const APP_VERSION = '1.41.0-inventory-pdf-delivery-timing';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -85,6 +85,12 @@ function defaultHubReferenceDate() {
 
 function inventoryTypeLabel(type) {
   return INVENTORY_TYPES.find(t => t.id === type)?.label || type || 'Inventaire';
+}
+
+function inventoryDeliveryTimingLabel(value) {
+  if (value === 'before') return 'Inventaire AVANT livraison';
+  if (value === 'after') return 'Inventaire APRÈS livraison';
+  return 'Non précisé';
 }
 
 const defaultState = () => ({
@@ -845,6 +851,15 @@ function bindPageEvents() {
   });
   document.querySelectorAll('.order-actions button').forEach(button => {
     button.setAttribute('tabindex', '-1');
+  });
+
+  document.querySelectorAll('[data-inventory-delivery]').forEach(checkbox => {
+    checkbox.addEventListener('change', event => {
+      if (!event.target.checked) return;
+      document.querySelectorAll('[data-inventory-delivery]').forEach(other => {
+        if (other !== event.target) other.checked = false;
+      });
+    });
   });
 
   const orderScanInput = document.querySelector('#orderScanInput');
@@ -2798,15 +2813,21 @@ function renderInventory() {
       <tr>
         <td><strong>${escapeHtml(formatDateFr(s.date))}</strong><br><span class="muted">${escapeHtml(s.date)}</span></td>
         <td>${escapeHtml(inventoryTypeLabel(s.type))}</td>
+        <td><span class="badge info">${escapeHtml(inventoryDeliveryTimingLabel(s.deliveryTiming))}</span></td>
         <td>${(s.lines || []).length} produit(s)</td>
         <td>${number(totalDiff)}</td>
         <td class="actions">
           <button class="small secondary" data-action="selectInventorySlot" data-id="${s.date}" data-type="${s.type}">Ouvrir</button>
+          <button class="small secondary" data-action="exportInventorySessionPdf" data-id="${s.id}">PDF</button>
           <button class="small danger-soft" data-action="deleteInventorySession" data-id="${s.id}">Supprimer</button>
         </td>
       </tr>
     `;
-  }).join('') || `<tr><td colspan="5" class="empty">Aucun inventaire enregistré.</td></tr>`;
+  }).join('') || `<tr><td colspan="6" class="empty">Aucun inventaire enregistré.</td></tr>`;
+
+  const selectedDeliveryTiming = selectedSession?.deliveryTiming || '';
+  const beforeChecked = selectedDeliveryTiming === 'before' ? 'checked' : '';
+  const afterChecked = selectedDeliveryTiming === 'after' ? 'checked' : '';
 
   const selectedInventoryPanel = `
     <div class="card selected-inventory-card">
@@ -2827,10 +2848,17 @@ function renderInventory() {
         <label>Type<select id="inventoryType">${INVENTORY_TYPES.map(t => `<option value="${t.id}" ${selected.type === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}</select></label>
         <label class="wide">Sélection rapide<button type="button" data-action="selectInventoryManual" class="secondary full">Charger cette date / ce type</button></label>
       </div>
+      <div class="delivery-timing-box">
+        <strong>Moment de l’inventaire</strong>
+        <label class="checkbox-line"><input type="checkbox" id="inventoryBeforeDelivery" data-inventory-delivery="before" ${beforeChecked} /> Inventaire AVANT livraison</label>
+        <label class="checkbox-line"><input type="checkbox" id="inventoryAfterDelivery" data-inventory-delivery="after" ${afterChecked} /> Inventaire APRÈS livraison</label>
+        <span class="muted">Une seule option peut être cochée à la fois.</span>
+      </div>
       <p class="muted">La liste suit l’ordre des bons de commande. Tu peux l’ajuster avec les flèches ↑↓ ou rétablir l’ordre d’origine du bon de commande.</p>
       <div class="table-wrap inventory-entry-table"><table><thead><tr><th>Ordre</th><th>Produit</th><th>Stock théorique</th><th>Quantité comptée</th><th>Unité</th><th>Note</th><th>Déplacer</th></tr></thead><tbody>${inventoryRows}</tbody></table></div>
       <div class="form-actions">
         <button data-action="exportCsv" data-type="inventories" class="secondary">Exporter historiques CSV</button>
+        <button data-action="exportCurrentInventoryPdf" class="secondary">Exporter PDF</button>
         <button data-action="saveInventorySession" class="success">Enregistrer l’inventaire</button>
       </div>
     </div>
@@ -2899,7 +2927,7 @@ function renderInventory() {
     </div>
     <div class="card" style="margin-top:18px;">
       <div class="toolbar"><h3>Historique des inventaires</h3><span class="muted">Général, Ultra frais et HUB</span></div>
-      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Lignes</th><th>Écart total</th><th>Actions</th></tr></thead><tbody>${historyRows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Moment</th><th>Lignes</th><th>Écart total</th><th>Actions</th></tr></thead><tbody>${historyRows}</tbody></table></div>
     </div>
   `;
 }
@@ -4420,6 +4448,7 @@ const actions = {
     const date = document.querySelector('#inventoryDate')?.value || today();
     const type = document.querySelector('#inventoryType')?.value || 'general';
     const existing = getInventorySession(date, type);
+    const deliveryTiming = document.querySelector('#inventoryBeforeDelivery')?.checked ? 'before' : (document.querySelector('#inventoryAfterDelivery')?.checked ? 'after' : '');
     const sessionId = existing?.id || uid();
     state.movements = state.movements.filter(m => m.inventorySessionId !== sessionId);
     const lines = productsForInventory(type, date).map(product => {
@@ -4438,6 +4467,7 @@ const actions = {
       date,
       dayName: dayNames[parseDate(date).getDay()],
       type,
+      deliveryTiming,
       status: 'Validé',
       createdAt: existing?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -4466,6 +4496,46 @@ const actions = {
     selectedInventorySlot = { date, type };
     delete inventoryDraftValues[inventoryDraftKey(date, type)];
     saveState(); render(); toast('Inventaire enregistré');
+  },
+  exportCurrentInventoryPdf() {
+    const date = document.querySelector('#inventoryDate')?.value || selectedInventorySlot?.date || today();
+    const type = document.querySelector('#inventoryType')?.value || selectedInventorySlot?.type || 'general';
+    const deliveryTiming = document.querySelector('#inventoryBeforeDelivery')?.checked ? 'before' : (document.querySelector('#inventoryAfterDelivery')?.checked ? 'after' : '');
+    const rows = productsForInventory(type, date).map((product, index) => {
+      const countRaw = document.querySelector(`[data-count="${product.id}"]`)?.value || '';
+      const note = document.querySelector(`[data-inventory-note="${product.id}"]`)?.value || '';
+      return {
+        order: index + 1,
+        name: product.name || '',
+        category: productCategoryLabel(product),
+        zone: getZone(product.storageZoneId)?.name || product.storageLabel || '',
+        packageSize: product.packageSize || '',
+        expectedQty: stockByProductExcludingSession(product.id, getInventorySession(date, type)?.id || ''),
+        countedQty: countRaw,
+        unit: product.unit || '',
+        note
+      };
+    });
+    printInventoryPdf(date, type, rows, deliveryTiming);
+  },
+  exportInventorySessionPdf(id) {
+    const session = state.inventorySessions.find(s => s.id === id);
+    if (!session) return toast('Inventaire introuvable');
+    const rows = (session.lines || []).map((line, index) => {
+      const product = getProduct(line.productId) || {};
+      return {
+        order: index + 1,
+        name: product.name || 'Produit supprimé',
+        category: productCategoryLabel(product),
+        zone: getZone(product.storageZoneId)?.name || product.storageLabel || '',
+        packageSize: product.packageSize || '',
+        expectedQty: line.expectedQty,
+        countedQty: line.countedQty,
+        unit: line.unit || product.unit || '',
+        note: line.note || ''
+      };
+    });
+    printInventoryPdf(session.date, session.type, rows, session.deliveryTiming);
   },
   deleteInventorySession(id) {
     if (!confirm('Supprimer cet inventaire ? Les ajustements de stock liés seront également supprimés.')) return;
@@ -4500,6 +4570,83 @@ function downloadJson() {
   downloadBlob(blob, `sauvegarde-stock-${today()}.json`);
 }
 
+
+function inventoryPdfTitle(date, type) {
+  return `Inventaire ${inventoryTypeLabel(type)} - ${formatDateFr(date)}`;
+}
+
+function printInventoryPdf(date, type, rows, deliveryTiming = '') {
+  const printedAt = new Date().toLocaleString('fr-FR');
+  const title = inventoryPdfTitle(date, type);
+  const timingLabel = inventoryDeliveryTimingLabel(deliveryTiming);
+  const rowsHtml = rows.map(line => `
+    <tr>
+      <td>${escapeHtml(line.order ?? '')}</td>
+      <td><strong>${escapeHtml(line.name || '')}</strong><br><span>${escapeHtml(line.packageSize || '')}</span></td>
+      <td>${escapeHtml(line.category || '')}</td>
+      <td>${escapeHtml(line.zone || '')}</td>
+      <td>${number(line.expectedQty)}</td>
+      <td>${escapeHtml(line.countedQty ?? '')}</td>
+      <td>${escapeHtml(line.unit || '')}</td>
+      <td>${escapeHtml(line.note || '')}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="8">Aucun produit à exporter.</td></tr>';
+  const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4 landscape; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111827; margin: 0; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .meta { font-size: 11px; color: #4b5563; text-align: right; }
+    .subtitle { font-size: 12px; color: #4b5563; margin: 0; }
+    .timing { display: inline-block; margin-top: 6px; padding: 3px 8px; border: 1px solid #111827; border-radius: 999px; font-size: 11px; font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    th, td { border: 1px solid #d1d5db; padding: 4px 5px; vertical-align: top; }
+    th { background: #f3f4f6; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .03em; }
+    td:nth-child(1), td:nth-child(5), td:nth-child(6), td:nth-child(7) { text-align: center; }
+    td:nth-child(1) { width: 38px; }
+    td:nth-child(2) { width: 260px; }
+    td:nth-child(5), td:nth-child(6) { width: 70px; }
+    td:nth-child(7) { width: 50px; }
+    span { color: #6b7280; }
+    footer { margin-top: 8px; font-size: 10px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="subtitle">${escapeHtml(rows.length)} produit(s) · ${escapeHtml(inventoryTypeLabel(type))}</p>
+      <div class="timing">${escapeHtml(timingLabel)}</div>
+    </div>
+    <div class="meta">
+      <strong>${escapeHtml(state.settings.companyName || 'Gestion Stock')}</strong><br>
+      Exporté le ${escapeHtml(printedAt)}<br>
+      Date inventaire : ${escapeHtml(date)}
+    </div>
+  </header>
+  <table>
+    <thead><tr><th>Ordre</th><th>Produit</th><th>Catégorie</th><th>Zone</th><th>Théorique</th><th>Compté</th><th>Unité</th><th>Note</th></tr></thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  <footer>Export PDF généré depuis la page Inventaire.</footer>
+  <script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
+</body>
+</html>`;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('La fenêtre PDF a été bloquée par le navigateur. Autorise les pop-ups puis réessaie.');
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
 
 function monthEndPdfTitle(month) {
   if (!month) return 'Inventaire fin de mois';
@@ -4648,7 +4795,7 @@ function buildCsvDatasets() {
     scanned_receipts: (state.scannedReceipts || []).map(s => ({ date: s.date, jour: s.dayName, type: receiptTypeLabel(s.type), document: receiptDocLabel(s.docType), pages: scanPageCount(s), fichiers: scanPages(s).map(p => p.fileName).join(' | '), numerise_le: s.scannedAt })),
     receipts: state.receipts.map(r => ({ reference: r.ref, date: r.date, fournisseur: getSupplier(r.supplierId)?.name || '', commande: state.orders.find(o => o.id === r.orderId)?.ref || '', lignes: (r.lines || []).length, note: r.note })),
     movements: state.movements.map(m => ({ date: m.date, type: m.type, produit: getProduct(m.productId)?.name || '', quantite: m.qty, depuis: getZone(m.fromZoneId)?.name || '', vers: getZone(m.toZoneId)?.name || '', lot: m.batch, dlc: m.dlc, note: m.note })),
-    inventories: state.inventorySessions.flatMap(s => (s.lines || []).map(line => ({ date: s.date, jour: s.dayName, type: inventoryTypeLabel(s.type), reference: getProduct(line.productId)?.sku || '', produit: getProduct(line.productId)?.name || '', conditionnement: getProduct(line.productId)?.packageSize || '', stock_theorique: line.expectedQty, quantite_comptee: line.countedQty, ecart: line.diff, unite: line.unit, note: line.note }))),
+    inventories: state.inventorySessions.flatMap(s => (s.lines || []).map(line => ({ date: s.date, jour: s.dayName, type: inventoryTypeLabel(s.type), moment: inventoryDeliveryTimingLabel(s.deliveryTiming), reference: getProduct(line.productId)?.sku || '', produit: getProduct(line.productId)?.name || '', conditionnement: getProduct(line.productId)?.packageSize || '', stock_theorique: line.expectedQty, quantite_comptee: line.countedQty, ecart: line.diff, unite: line.unit, note: line.note }))),
     monthEnd: (state.monthEndSessions || []).flatMap(s => (s.lines || []).map(line => ({ mois: s.month, ordre_tri: line.order, reference: line.sku, produit: line.name, categorie: line.category, zone: line.zone, conditionnement: line.packageSize, ue: line.ue, su: line.su, uu: line.uu, note: line.note }))),
     zones: state.zones.map(z => ({ ordre: z.sequence, zone: z.name, type: z.type, temperature: z.temperature, consigne: z.description })),
     suppliers: state.suppliers.map(s => ({ fournisseur: s.name, contact: s.contact, email: s.email, telephone: s.phone, delai_jours: s.defaultDelay, note: s.note }))

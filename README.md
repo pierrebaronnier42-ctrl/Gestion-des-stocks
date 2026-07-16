@@ -186,4 +186,11 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 ## Version v15
 
 - Correction mobile/tablette : le changement d'ordre dans l'inventaire conserve la position à l'écran au lieu de remonter en haut.
-- Cache GitHub Pages : v1.40.
+- Cache GitHub Pages : v1.41.
+
+
+## Version v1.41
+
+- Ajout de l’export PDF pour les inventaires.
+- Ajout des cases Inventaire AVANT livraison / Inventaire APRÈS livraison.
+- Le moment de l’inventaire est enregistré et visible dans l’historique/export.

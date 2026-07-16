@@ -739,3 +739,17 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
   0% { background: rgba(37, 99, 235, 0.14); }
   100% { background: transparent; }
 }
+
+.delivery-timing-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 14px;
+  margin: 12px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: #f8fafc;
+}
+.delivery-timing-box strong { margin-right: 6px; }
+.delivery-timing-box .checkbox-line { margin: 0; }
