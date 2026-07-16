@@ -181,3 +181,9 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 ## Version v14
 
 - Correction du déplacement manuel dans l'inventaire : après ↑/↓, la page reste centrée sur la ligne modifiée au lieu de remonter en haut.
+
+
+## Version v15
+
+- Correction mobile/tablette : le changement d'ordre dans l'inventaire conserve la position à l'écran au lieu de remonter en haut.
+- Cache GitHub Pages : v1.40.

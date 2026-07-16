@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.39.0-inventory-order-scroll';
+const APP_VERSION = '1.40.0-inventory-order-scroll-mobile';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -726,15 +726,47 @@ function restoreInventoryScrollTarget() {
   if (!pendingInventoryScrollTarget || currentPage !== 'inventory') return;
   const target = pendingInventoryScrollTarget;
   pendingInventoryScrollTarget = null;
-  requestAnimationFrame(() => {
+
+  const restore = () => {
     const row = document.querySelector(`[data-inventory-row="${cssEscapeValue(target.productId)}"]`);
     if (!row) return;
-    row.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' });
+
+    const tableWrap = row.closest('.table-wrap');
+    if (tableWrap && Number.isFinite(target.tableScrollTop)) {
+      tableWrap.scrollTop = target.tableScrollTop;
+      tableWrap.scrollLeft = target.tableScrollLeft || 0;
+    }
+
+    if (Number.isFinite(target.viewportTop)) {
+      const nextTop = row.getBoundingClientRect().top;
+      const delta = nextTop - target.viewportTop;
+      const scroller = document.scrollingElement || document.documentElement;
+      scroller.scrollTop += delta;
+    } else if (Number.isFinite(target.windowScrollY)) {
+      window.scrollTo(target.windowScrollX || 0, target.windowScrollY);
+    }
+
     row.classList.add('row-flash');
     const button = row.querySelector(`[data-action="moveInventoryProduct"][data-type="${target.direction}"]`) || row.querySelector('[data-action="moveInventoryProduct"]');
     if (button && !button.disabled) button.focus({ preventScroll: true });
     setTimeout(() => row.classList.remove('row-flash'), 900);
-  });
+  };
+
+  requestAnimationFrame(() => requestAnimationFrame(restore));
+}
+
+function captureInventoryScrollTarget(productId, direction) {
+  const row = document.querySelector(`[data-inventory-row="${cssEscapeValue(productId)}"]`);
+  const tableWrap = row?.closest('.table-wrap');
+  return {
+    productId,
+    direction,
+    viewportTop: row ? row.getBoundingClientRect().top : null,
+    windowScrollY: window.scrollY,
+    windowScrollX: window.scrollX,
+    tableScrollTop: tableWrap ? tableWrap.scrollTop : null,
+    tableScrollLeft: tableWrap ? tableWrap.scrollLeft : null
+  };
 }
 
 function bindPageEvents() {
@@ -4366,7 +4398,7 @@ const actions = {
     const target = rows[targetIndex];
     setProductInventoryOrder(current.id, slot, targetIndex + 1);
     setProductInventoryOrder(target.id, slot, index + 1);
-    pendingInventoryScrollTarget = { productId: current.id, direction };
+    pendingInventoryScrollTarget = captureInventoryScrollTarget(current.id, direction);
     saveState();
     render();
   },
