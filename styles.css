@@ -713,3 +713,18 @@ button:disabled, .file-label:disabled {
 .mini-input { width: 84px; min-width: 84px; }
 .wrap-actions { flex-wrap: wrap; justify-content: flex-start; }
 textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 160px; resize: vertical; }
+
+
+.ocr-progress-card { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-soft, #f8fafc); }
+.ocr-progress-track { height: 12px; border-radius: 999px; background: #e5e7eb; overflow: hidden; }
+.ocr-progress-fill { height: 100%; border-radius: inherit; background: #2563eb; transition: width .2s ease; }
+.ocr-result-label { display: block; margin-top: 14px; }
+.ocr-result-label textarea { margin-top: 7px; width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+
+.pdf-review-grid { display: grid; gap: 14px; margin-top: 14px; }
+.inset-card { background: rgba(248, 250, 252, 0.7); border-style: dashed; }
+.compact-table table td, .compact-table table th { vertical-align: top; }
+.compact-table input, .compact-table select { min-width: 120px; }
+.compact-table .mini-input { min-width: 72px; width: 84px; }
+@media (max-width: 900px) { .compact-table input, .compact-table select { min-width: 160px; } }

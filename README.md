@@ -155,3 +155,14 @@ Ajout d'une sous-page **Inventaire > Mise à jour des listes** :
 - copier-coller un bon de commande pour remplacer ou compléter une liste ;
 - création automatique des nouvelles références inconnues ;
 - alerte en cas de doublon de numéro d'ordre.
+
+
+## Mise à jour des listes par photos
+Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser « Scanner toutes les pages » ou « Importer plusieurs photos ». La reconnaissance OCR s'effectue dans le navigateur. Vérifier et corriger le résultat avant de remplacer la liste.
+
+
+## Version 1.36
+- Ajout de l’import PDF d’inventaire / bon de commande depuis la sous-page Inventaire > Mise à jour des listes.
+- Analyse des références du PDF, mise à jour de l’ordre du bon de commande, détection des nouveaux produits, des références absentes, des changements probables de référence et des changements de conditionnement.
+- Les nouveaux produits demandent une zone de stockage et un numéro de séquençage avant application.
+- Les références sont utilisées comme clé interne mais ne sont plus affichées dans la liste de saisie d’inventaire.

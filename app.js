@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.33.0-missing-receipt-docs';
+const APP_VERSION = '1.36.0-inventory-pdf-sync';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -129,6 +129,8 @@ let selectedMonthEndMonth = today().slice(0, 7);
 let monthEndDraftValues = {};
 let supabaseClient = null;
 let activeMultiPhotoScanner = null;
+let inventoryPhotoOcrDraft = { status: 'idle', progress: 0, message: '', pages: [], text: '', matched: 0, unknown: 0 };
+let inventoryPdfImportDraft = { status: 'idle', slot: '', fileName: '', lines: [], exact: [], replacements: [], newItems: [], missing: [], message: '' };
 let cloudReady = false;
 let cloudSaveTimer = null;
 let isApplyingCloudState = false;
@@ -797,6 +799,22 @@ function bindPageEvents() {
       saveScannedReceiptFiles(target.date, target.type, target.docType, files);
     });
   }
+  const inventoryOcrInput = document.querySelector('#inventoryOcrInput');
+  if (inventoryOcrInput) {
+    inventoryOcrInput.addEventListener('change', event => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = '';
+      if (files.length) processInventoryOcrFiles(files);
+    });
+  }
+  const inventoryPdfInput = document.querySelector('#inventoryPdfInput');
+  if (inventoryPdfInput) {
+    inventoryPdfInput.addEventListener('change', event => {
+      const files = Array.from(event.target.files || []);
+      event.target.value = '';
+      if (files.length) processInventoryPdfFiles(files);
+    });
+  }
   const logoInput = document.querySelector('#settingLogoInput');
   if (logoInput) {
     logoInput.addEventListener('change', event => {
@@ -1023,11 +1041,11 @@ function createProductFromImportedLine(line, slot, order) {
   return product;
 }
 
-function applyImportedInventoryList(slot, mode) {
-  const raw = document.querySelector('#inventoryImportText')?.value || '';
+function applyImportedInventoryText(slot, mode, rawText, sourceLabel = 'texte') {
+  const raw = String(rawText || '');
   const lines = parseInventoryImportLines(raw);
-  if (!lines.length) return toast('Colle au moins une ligne de bon de commande');
-  if (mode === 'replace' && !confirm('Remplacer complètement la liste de ce jour/type par le texte collé ?')) return;
+  if (!lines.length) return toast('Ajoute au moins une référence produit');
+  if (mode === 'replace' && !confirm(`Remplacer complètement la liste de ce jour/type par les données détectées depuis ${sourceLabel} ?`)) return;
   cacheCurrentInventoryDraft(selectedInventorySlot?.date || today(), selectedInventorySlot?.type || 'general');
   if (mode === 'replace') {
     state.products.forEach(product => {
@@ -1054,6 +1072,520 @@ function applyImportedInventoryList(slot, mode) {
   saveState();
   render();
   toast(`${mode === 'replace' ? 'Liste remplacée' : 'Produits ajoutés'} · ${lines.length} ligne(s), ${created} création(s)`);
+}
+
+function applyImportedInventoryList(slot, mode) {
+  const raw = document.querySelector('#inventoryImportText')?.value || '';
+  applyImportedInventoryText(slot, mode, raw, 'copier-coller');
+}
+
+function inventoryOcrSkuFromCandidate(value) {
+  const normalized = String(value || '')
+    .toUpperCase()
+    .replace(/[OQD]/g, '0')
+    .replace(/[IL|]/g, '1')
+    .replace(/S/g, '5')
+    .replace(/B/g, '8')
+    .replace(/[^0-9]/g, '');
+  if (normalized.length !== 8) return '';
+  return `${normalized.slice(0, 5)}.${normalized.slice(5)}`;
+}
+
+function inventoryOcrLinesFromText(rawText) {
+  const knownSkus = new Set(state.products.map(product => String(product.sku || '').trim()).filter(Boolean));
+  const seen = new Set();
+  const results = [];
+  const rawLines = String(rawText || '').split(/\r?\n/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  rawLines.forEach(rawLine => {
+    const candidates = [];
+    const separated = rawLine.match(/[0-9OQDIL|SB]{5}\s*[.,;:]\s*[0-9OQDIL|SB]{3}/gi) || [];
+    candidates.push(...separated);
+    const compact = rawLine.match(/\b[0-9OQDIL|SB]{8}\b/gi) || [];
+    candidates.push(...compact);
+    let sku = '';
+    for (const candidate of candidates) {
+      const normalized = inventoryOcrSkuFromCandidate(candidate);
+      if (normalized && (knownSkus.has(normalized) || !sku)) sku = normalized;
+      if (knownSkus.has(normalized)) break;
+    }
+    if (!sku || seen.has(sku)) return;
+    seen.add(sku);
+    const product = state.products.find(item => String(item.sku || '').trim() === sku);
+    let name = product?.name || rawLine;
+    const skuIndex = rawLine.toUpperCase().indexOf(String(candidates[0] || '').toUpperCase());
+    if (!product && skuIndex >= 0) {
+      name = rawLine.slice(skuIndex + String(candidates[0]).length).replace(/^[-–—:;\s]+/, '').trim() || rawLine;
+    }
+    results.push({ sku, name, raw: rawLine, matched: Boolean(product) });
+  });
+  return results;
+}
+
+function extractPackageFromImportedName(namePart) {
+  const tokens = String(namePart || '').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const unitRe = /^(CT|PN|PC|SA|KG|G|L|ML|BT|BQ|SEAU|S\.|U)$/i;
+  let packageIndex = -1;
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    if (/^\d[\d\s,.\/Xx-]*$/.test(tokens[i]) && unitRe.test(tokens[i + 1])) packageIndex = i;
+  }
+  if (packageIndex < 0) return { name: String(namePart || '').trim(), packageSize: '' };
+  return {
+    name: tokens.slice(0, packageIndex).join(' ').trim() || String(namePart || '').trim(),
+    packageSize: tokens.slice(packageIndex, Math.min(tokens.length, packageIndex + 2)).join(' ').trim()
+  };
+}
+
+function normalizeInventoryMatchName(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\b(v2|nf|c|nv|new|oil)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function inventoryNameSimilarity(a, b) {
+  const aw = new Set(normalizeInventoryMatchName(a).split(' ').filter(word => word.length > 1));
+  const bw = new Set(normalizeInventoryMatchName(b).split(' ').filter(word => word.length > 1));
+  if (!aw.size || !bw.size) return 0;
+  let hit = 0;
+  aw.forEach(word => { if (bw.has(word)) hit += 1; });
+  return hit / Math.max(aw.size, bw.size);
+}
+
+function enhanceImportedInventoryLines(rawText) {
+  const seen = new Set();
+  return String(rawText || '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .map((line, index) => {
+      const skuMatch = line.match(/(\d{5}\s*[.,;:]\s*\d{3})/);
+      const zoneMatch = line.match(/^(Négatif|Negatif|Positif|Sec)\s+/i);
+      if (!skuMatch) return null;
+      const sku = skuMatch[1].replace(/\s+/g, '').replace(/[,:;]/, '.');
+      if (seen.has(sku)) return null;
+      seen.add(sku);
+      const afterSku = line.slice(line.indexOf(skuMatch[1]) + skuMatch[1].length).replace(/^[-–—:;\s]+/, '').trim();
+      const parsed = extractPackageFromImportedName(afterSku);
+      let name = parsed.name || afterSku || line;
+      if (zoneMatch && name.toLowerCase().startsWith(zoneMatch[1].toLowerCase())) name = name.slice(zoneMatch[0].length).trim();
+      return { raw: line, sku, name, packageSize: parsed.packageSize, zoneLabel: zoneMatch ? zoneMatch[1].replace('Negatif', 'Négatif') : '', order: index + 1 };
+    })
+    .filter(Boolean)
+    .map((line, index) => ({ ...line, order: index + 1 }));
+}
+
+function zoneOptionsHtml(selected = '', includeEmpty = true) {
+  const empty = includeEmpty ? '<option value="">Choisir une zone</option>' : '';
+  return empty + state.zones.map(zone => `<option value="${escapeHtml(zone.id)}" ${selected === zone.id ? 'selected' : ''}>${escapeHtml(zone.code ? zone.code + ' · ' : '')}${escapeHtml(zone.name || '')}</option>`).join('');
+}
+
+function bestInventoryReplacementCandidate(line, currentProducts) {
+  let best = null;
+  let score = 0;
+  currentProducts.forEach(product => {
+    const candidateScore = inventoryNameSimilarity(line.name, product.name);
+    if (candidateScore > score) { best = product; score = candidateScore; }
+  });
+  return score >= 0.45 ? { product: best, score } : null;
+}
+
+function buildInventoryPdfImportDraft(slot, lines, fileName = '') {
+  const currentProducts = productsForInventorySlot(slot, true);
+  const currentSkuSet = new Set(currentProducts.map(product => String(product.sku || '').trim()).filter(Boolean));
+  const incomingSkuSet = new Set(lines.map(line => line.sku).filter(Boolean));
+  const replacements = [];
+  const exact = [];
+  const newItems = [];
+  const usedReplacementIds = new Set();
+
+  lines.forEach((line, index) => {
+    const exactProduct = state.products.find(product => String(product.sku || '').trim() === line.sku);
+    if (exactProduct) {
+      exact.push({ ...line, productId: exactProduct.id, oldName: exactProduct.name || '', oldPackageSize: exactProduct.packageSize || '', order: index + 1 });
+      return;
+    }
+    const replacement = bestInventoryReplacementCandidate(line, currentProducts.filter(product => !usedReplacementIds.has(product.id)));
+    if (replacement?.product) {
+      usedReplacementIds.add(replacement.product.id);
+      replacements.push({ ...line, productId: replacement.product.id, oldSku: replacement.product.sku || '', oldName: replacement.product.name || '', oldPackageSize: replacement.product.packageSize || '', score: replacement.score, order: index + 1 });
+      return;
+    }
+    newItems.push({ ...line, storageZoneId: zoneIdFromImportLabel(line.zoneLabel), order: index + 1 });
+  });
+
+  const keptIds = new Set([...exact.map(item => item.productId), ...replacements.map(item => item.productId)]);
+  const missing = currentProducts
+    .filter(product => !incomingSkuSet.has(String(product.sku || '').trim()))
+    .filter(product => !keptIds.has(product.id))
+    .map(product => ({ productId: product.id, sku: product.sku || '', name: product.name || '', packageSize: product.packageSize || '', active: product.active !== false }));
+
+  return { status: 'done', slot, fileName, lines, exact, replacements, newItems, missing, message: `${lines.length} référence(s) détectée(s)` };
+}
+
+async function extractTextFromInventoryPdf(file) {
+  if (!window.pdfjsLib?.getDocument) throw new Error('Le module PDF.js n’est pas chargé. Recharge la page avec internet.');
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+  const buffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+  const pages = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const rows = new Map();
+    content.items.forEach(item => {
+      const y = Math.round((item.transform?.[5] || 0) / 3) * 3;
+      if (!rows.has(y)) rows.set(y, []);
+      rows.get(y).push(item);
+    });
+    const pageText = [...rows.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .map(([, items]) => items.sort((a, b) => (a.transform?.[4] || 0) - (b.transform?.[4] || 0)).map(item => item.str).join(' '))
+      .join('\n');
+    pages.push(pageText);
+  }
+  return pages.join('\n');
+}
+
+async function processInventoryPdfFiles(files) {
+  const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+  const pdfFiles = Array.from(files || []).filter(file => String(file.type || '').includes('pdf') || String(file.name || '').toLowerCase().endsWith('.pdf'));
+  if (!pdfFiles.length) return toast('Sélectionne un fichier PDF');
+  inventoryPdfImportDraft = { status: 'processing', slot, fileName: pdfFiles.map(f => f.name).join(', '), lines: [], exact: [], replacements: [], newItems: [], missing: [], message: 'Lecture du PDF…' };
+  render();
+  try {
+    const texts = [];
+    for (const file of pdfFiles) texts.push(await extractTextFromInventoryPdf(file));
+    const lines = enhanceImportedInventoryLines(texts.join('\n'));
+    if (!lines.length) {
+      inventoryPdfImportDraft = { status: 'error', slot, fileName: pdfFiles.map(f => f.name).join(', '), lines: [], exact: [], replacements: [], newItems: [], missing: [], message: 'Aucune référence détectée. Si ton PDF est une image scannée, utilise le mode photos/OCR.' };
+      render();
+      return toast('Aucune référence trouvée dans le PDF');
+    }
+    inventoryPdfImportDraft = buildInventoryPdfImportDraft(slot, lines, pdfFiles.map(f => f.name).join(', '));
+    render();
+    toast(`${lines.length} référence(s) détectée(s). Vérifie avant d’appliquer.`);
+  } catch (error) {
+    console.error(error);
+    inventoryPdfImportDraft = { status: 'error', slot, fileName: pdfFiles.map(f => f.name).join(', '), lines: [], exact: [], replacements: [], newItems: [], missing: [], message: error.message || 'Erreur de lecture du PDF' };
+    render();
+    toast('Impossible de lire le PDF');
+  }
+}
+
+function renderInventoryPdfReview() {
+  if (inventoryPdfImportDraft.status === 'idle') return '';
+  if (inventoryPdfImportDraft.status === 'processing') return `
+    <div class="alert info" style="margin-top:14px;"><strong>Lecture du PDF en cours…</strong><br>${escapeHtml(inventoryPdfImportDraft.message || '')}</div>
+  `;
+  if (inventoryPdfImportDraft.status === 'error') return `
+    <div class="alert danger" style="margin-top:14px;">${escapeHtml(inventoryPdfImportDraft.message || 'Erreur de lecture')}</div>
+  `;
+  const exactRows = inventoryPdfImportDraft.exact.map((item, index) => `
+    <tr>
+      <td><input class="mini-input" data-pdf-exact-order="${index}" type="number" min="1" step="1" value="${escapeHtml(item.order)}" /></td>
+      <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">Référence utilisée : ${escapeHtml(item.sku)} · ${escapeHtml(item.packageSize || '-')}</span></td>
+      <td>${item.oldPackageSize && item.oldPackageSize !== item.packageSize ? `<span class="badge warning">Cond. modifié : ${escapeHtml(item.oldPackageSize)} → ${escapeHtml(item.packageSize || '-')}</span>` : '<span class="badge success">OK</span>'}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="3" class="empty">Aucune référence déjà connue.</td></tr>`;
+
+  const replacementRows = inventoryPdfImportDraft.replacements.map((item, index) => `
+    <tr>
+      <td><input class="mini-input" data-pdf-replacement-order="${index}" type="number" min="1" step="1" value="${escapeHtml(item.order)}" /></td>
+      <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">Nouvelle réf. ${escapeHtml(item.sku)} · ${escapeHtml(item.packageSize || '-')}</span></td>
+      <td><strong>${escapeHtml(item.oldName)}</strong><br><span class="muted">Ancienne réf. ${escapeHtml(item.oldSku || '-')} · ${escapeHtml(item.oldPackageSize || '-')}</span></td>
+      <td><select data-pdf-replacement-action="${index}"><option value="replace" selected>Remplacer l’ancienne référence</option><option value="new">Créer comme nouveau produit</option></select></td>
+      <td><select data-pdf-replacement-zone="${index}">${zoneOptionsHtml(zoneIdFromImportLabel(item.zoneLabel) || '', true)}</select></td>
+    </tr>
+  `).join('') || `<tr><td colspan="5" class="empty">Aucun changement de référence probable détecté.</td></tr>`;
+
+  const newRows = inventoryPdfImportDraft.newItems.map((item, index) => `
+    <tr>
+      <td><input class="mini-input" data-pdf-new-order="${index}" type="number" min="1" step="1" value="${escapeHtml(item.order)}" /></td>
+      <td><input data-pdf-new-sku="${index}" value="${escapeHtml(item.sku)}" /></td>
+      <td><input data-pdf-new-name="${index}" value="${escapeHtml(item.name)}" /></td>
+      <td><input data-pdf-new-package="${index}" value="${escapeHtml(item.packageSize || '')}" /></td>
+      <td><select data-pdf-new-zone="${index}">${zoneOptionsHtml(item.storageZoneId || '', true)}</select></td>
+    </tr>
+  `).join('') || `<tr><td colspan="5" class="empty">Aucun nouveau produit détecté.</td></tr>`;
+
+  const missingRows = inventoryPdfImportDraft.missing.map((item, index) => `
+    <tr>
+      <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">Référence actuelle : ${escapeHtml(item.sku || '-')} · ${escapeHtml(item.packageSize || '-')}</span></td>
+      <td><span class="badge warning">Absent du PDF</span></td>
+      <td><label class="checkbox-line"><input type="checkbox" data-pdf-missing-archive="${index}" /> Archiver si plus d’actualité</label></td>
+    </tr>
+  `).join('') || `<tr><td colspan="3" class="empty">Aucun produit à retirer de cette liste.</td></tr>`;
+
+  return `
+    <div class="alert info" style="margin-top:14px;">
+      <strong>Analyse du PDF : ${escapeHtml(inventoryPdfImportDraft.fileName || 'document')}</strong><br>
+      ${escapeHtml(inventoryPdfImportDraft.lines.length)} référence(s) détectée(s) · ${escapeHtml(inventoryPdfImportDraft.exact.length)} connue(s) · ${escapeHtml(inventoryPdfImportDraft.replacements.length)} remplacement(s) possible(s) · ${escapeHtml(inventoryPdfImportDraft.newItems.length)} nouveau(x) · ${escapeHtml(inventoryPdfImportDraft.missing.length)} à retirer.
+    </div>
+    <div class="pdf-review-grid">
+      <div class="card inset-card">
+        <h4>1. Références connues</h4>
+        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Produit</th><th>Changement</th></tr></thead><tbody>${exactRows}</tbody></table></div>
+      </div>
+      <div class="card inset-card">
+        <h4>2. Changements de référence possibles</h4>
+        <p class="muted">Le logiciel se base sur le nom produit pour repérer une référence remplacée.</p>
+        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Nouveau PDF</th><th>Produit actuel suggéré</th><th>Action</th><th>Zone si nouveau</th></tr></thead><tbody>${replacementRows}</tbody></table></div>
+      </div>
+      <div class="card inset-card">
+        <h4>3. Nouveaux produits</h4>
+        <p class="muted">Choisis la zone de stockage avant d’appliquer. Le N° séq. correspond à l’ordre du bon de commande.</p>
+        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Réf.</th><th>Produit</th><th>Conditionnement</th><th>Zone</th></tr></thead><tbody>${newRows}</tbody></table></div>
+      </div>
+      <div class="card inset-card">
+        <h4>4. Produits absents du nouveau PDF</h4>
+        <p class="muted">Ils seront retirés de cette liste. Coche archive seulement si le produit n’est plus d’actualité.</p>
+        <div class="table-wrap compact-table"><table><thead><tr><th>Produit actuel</th><th>Statut</th><th>Archiver ?</th></tr></thead><tbody>${missingRows}</tbody></table></div>
+      </div>
+    </div>
+    <div class="form-actions wrap-actions" style="margin-top:14px;">
+      <button data-action="applyInventoryPdfImport" class="success">Appliquer la mise à jour PDF</button>
+      <button data-action="clearInventoryPdfImport" class="danger-soft">Annuler l’analyse</button>
+    </div>
+  `;
+}
+
+function createProductFromInventoryPdfItem(item, slot, order, zoneId) {
+  const def = inventorySlotDefinition(slot);
+  const product = migrateProduct({
+    id: uid(),
+    sku: String(item.sku || '').trim(),
+    name: String(item.name || 'Nouveau produit').trim(),
+    category: def.type === 'hub' ? 'hub' : def.type === 'ultra' ? 'fresh' : 'general',
+    unit: 'colis',
+    packageSize: String(item.packageSize || '').trim(),
+    minStock: 0,
+    maxStock: 0,
+    lastPrice: 0,
+    supplierId: '',
+    storageZoneId: zoneId || '',
+    inventorySlots: [slot],
+    inventoryOrders: { [slot]: Number(order || 0) || 1 },
+    active: true,
+    createdAt: today()
+  });
+  state.products.push(product);
+  return product;
+}
+
+function applyInventoryPdfImport() {
+  const draft = inventoryPdfImportDraft;
+  const slot = draft.slot || document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+  if (draft.status !== 'done') return toast('Aucun PDF analysé à appliquer');
+  if (!confirm('Appliquer cette mise à jour ? La liste actuelle sera remplacée par l’ordre du PDF.')) return;
+
+  const newRowsMissingZone = [];
+  draft.newItems.forEach((item, index) => {
+    const zoneId = document.querySelector(`[data-pdf-new-zone="${index}"]`)?.value || '';
+    if (!zoneId) newRowsMissingZone.push(index + 1);
+  });
+  draft.replacements.forEach((item, index) => {
+    const action = document.querySelector(`[data-pdf-replacement-action="${index}"]`)?.value || 'replace';
+    const zoneId = document.querySelector(`[data-pdf-replacement-zone="${index}"]`)?.value || '';
+    if (action === 'new' && !zoneId) newRowsMissingZone.push(`remplacement ${index + 1}`);
+  });
+  if (newRowsMissingZone.length) return toast('Choisis une zone pour les nouveaux produits avant d’appliquer');
+
+  cacheCurrentInventoryDraft(selectedInventorySlot?.date || today(), selectedInventorySlot?.type || 'general');
+
+  state.products.forEach(product => {
+    if (!productInventorySlots(product).includes(slot)) return;
+    product.inventorySlots = productInventorySlots(product).filter(item => item !== slot);
+    if (product.inventoryOrders) delete product.inventoryOrders[slot];
+  });
+
+  draft.exact.forEach((item, index) => {
+    const order = Number(document.querySelector(`[data-pdf-exact-order="${index}"]`)?.value || item.order || index + 1);
+    const product = getProduct(item.productId);
+    if (!product) return;
+    product.name = String(item.name || product.name || '').trim();
+    if (item.packageSize) product.packageSize = item.packageSize;
+    ensureProductInInventorySlot(product, slot, order);
+  });
+
+  draft.replacements.forEach((item, index) => {
+    const order = Number(document.querySelector(`[data-pdf-replacement-order="${index}"]`)?.value || item.order || index + 1);
+    const action = document.querySelector(`[data-pdf-replacement-action="${index}"]`)?.value || 'replace';
+    if (action === 'replace') {
+      const product = getProduct(item.productId);
+      if (!product) return;
+      product.sku = String(item.sku || product.sku || '').trim();
+      product.name = String(item.name || product.name || '').trim();
+      if (item.packageSize) product.packageSize = item.packageSize;
+      ensureProductInInventorySlot(product, slot, order);
+    } else {
+      const zoneId = document.querySelector(`[data-pdf-replacement-zone="${index}"]`)?.value || '';
+      createProductFromInventoryPdfItem(item, slot, order, zoneId);
+    }
+  });
+
+  draft.newItems.forEach((item, index) => {
+    const sku = document.querySelector(`[data-pdf-new-sku="${index}"]`)?.value || item.sku;
+    const name = document.querySelector(`[data-pdf-new-name="${index}"]`)?.value || item.name;
+    const packageSize = document.querySelector(`[data-pdf-new-package="${index}"]`)?.value || item.packageSize;
+    const order = Number(document.querySelector(`[data-pdf-new-order="${index}"]`)?.value || item.order || index + 1);
+    const zoneId = document.querySelector(`[data-pdf-new-zone="${index}"]`)?.value || '';
+    createProductFromInventoryPdfItem({ ...item, sku, name, packageSize }, slot, order, zoneId);
+  });
+
+  draft.missing.forEach((item, index) => {
+    const archive = Boolean(document.querySelector(`[data-pdf-missing-archive="${index}"]`)?.checked);
+    const product = getProduct(item.productId);
+    if (product && archive) product.active = false;
+  });
+
+  selectedInventorySlot = { date: dateForInventorySlot(slot), type: inventorySlotDefinition(slot).type };
+  inventoryPdfImportDraft = { status: 'idle', slot: '', fileName: '', lines: [], exact: [], replacements: [], newItems: [], missing: [], message: '' };
+  saveState();
+  render();
+  toast('Liste mise à jour avec le PDF');
+}
+
+function updateInventoryOcrProgress(message, progress = null) {
+  inventoryPhotoOcrDraft.message = message || '';
+  if (progress !== null) inventoryPhotoOcrDraft.progress = Math.max(0, Math.min(100, Math.round(progress)));
+  const messageEl = document.querySelector('#inventoryOcrMessage');
+  const progressEl = document.querySelector('#inventoryOcrProgress');
+  const progressTextEl = document.querySelector('#inventoryOcrProgressText');
+  if (messageEl) messageEl.textContent = inventoryPhotoOcrDraft.message;
+  if (progressEl) progressEl.style.width = `${inventoryPhotoOcrDraft.progress}%`;
+  if (progressTextEl) progressTextEl.textContent = `${inventoryPhotoOcrDraft.progress}%`;
+}
+
+function preprocessInventoryOcrImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const maxSide = 2400;
+      const ratio = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width) * ratio));
+      canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height) * ratio));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = imageData.data;
+      for (let i = 0; i < pixels.length; i += 4) {
+        const gray = pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114;
+        const contrasted = Math.max(0, Math.min(255, (gray - 128) * 1.36 + 128));
+        pixels[i] = pixels[i + 1] = pixels[i + 2] = contrasted;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', 0.9));
+    };
+    image.onerror = () => reject(new Error('Image illisible'));
+    image.src = dataUrl;
+  });
+}
+
+async function processInventoryOcrPages(pages) {
+  const imagePages = Array.from(pages || []).filter(page => page?.fileData && String(page.fileType || '').startsWith('image/'));
+  if (!imagePages.length) return toast('Ajoute au moins une photo des pages d’inventaire');
+  if (!window.Tesseract?.recognize) return toast('Le module de reconnaissance n’est pas chargé. Vérifie la connexion internet puis recharge la page.');
+  inventoryPhotoOcrDraft = { status: 'processing', progress: 0, message: 'Préparation de la reconnaissance…', pages: imagePages, text: '', matched: 0, unknown: 0 };
+  render();
+  const extractedTexts = [];
+  try {
+    for (let index = 0; index < imagePages.length; index += 1) {
+      const page = imagePages[index];
+      updateInventoryOcrProgress(`Préparation de la page ${index + 1}/${imagePages.length}…`, (index / imagePages.length) * 100);
+      const prepared = await preprocessInventoryOcrImage(page.fileData);
+      const result = await window.Tesseract.recognize(prepared, 'fra', {
+        logger: event => {
+          if (event.status !== 'recognizing text') return;
+          const pageProgress = Number(event.progress || 0);
+          const totalProgress = ((index + pageProgress) / imagePages.length) * 100;
+          updateInventoryOcrProgress(`Lecture de la page ${index + 1}/${imagePages.length}…`, totalProgress);
+        }
+      });
+      extractedTexts.push(result?.data?.text || '');
+    }
+    const detected = inventoryOcrLinesFromText(extractedTexts.join('\n'));
+    const matched = detected.filter(item => item.matched).length;
+    const unknown = detected.length - matched;
+    inventoryPhotoOcrDraft = {
+      status: 'done',
+      progress: 100,
+      message: detected.length ? `${detected.length} référence(s) détectée(s)` : 'Aucune référence détectée',
+      pages: imagePages,
+      text: detected.map(item => `${item.sku} ${item.name}`).join('\n'),
+      matched,
+      unknown
+    };
+    render();
+    toast(detected.length ? `${detected.length} produit(s) détecté(s) : vérifie la liste avant de l’appliquer` : 'Aucune référence produit détectée. Essaie avec des photos plus nettes et bien cadrées.');
+  } catch (error) {
+    console.error(error);
+    inventoryPhotoOcrDraft = { ...inventoryPhotoOcrDraft, status: 'error', message: 'La reconnaissance a échoué. Réessaie avec des photos plus nettes.' };
+    render();
+    toast('Impossible de lire les photos d’inventaire');
+  }
+}
+
+function prepareInventoryOcrPage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !String(file.type || '').startsWith('image/')) return reject(new Error('Photo invalide'));
+    const reader = new FileReader();
+    reader.onload = () => {
+      const image = new Image();
+      image.onload = () => {
+        try {
+          const maxSide = 2400;
+          const ratio = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width || 1, image.naturalHeight || image.height || 1));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, Math.round((image.naturalWidth || image.width || 1) * ratio));
+          canvas.height = Math.max(1, Math.round((image.naturalHeight || image.height || 1) * ratio));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+          resolve({
+            id: uid(),
+            fileName: file.name || `inventaire-${Date.now()}.jpg`,
+            fileType: 'image/jpeg',
+            fileData: canvas.toDataURL('image/jpeg', 0.9),
+            scannedAt: new Date().toISOString()
+          });
+        } catch (error) {
+          reject(error);
+        }
+      };
+      image.onerror = () => reject(new Error('Image illisible'));
+      image.src = String(reader.result || '');
+    };
+    reader.onerror = () => reject(reader.error || new Error('Lecture impossible'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function processInventoryOcrFiles(files) {
+  const imageFiles = Array.from(files || []).filter(file => String(file.type || '').startsWith('image/'));
+  if (!imageFiles.length) return toast('Sélectionne des photos au format image');
+  toast(`Préparation de ${imageFiles.length} photo(s)…`);
+  try {
+    const pages = [];
+    for (const file of imageFiles) {
+      const page = await prepareInventoryOcrPage(file);
+      if (page) pages.push(page);
+    }
+    await processInventoryOcrPages(pages);
+  } catch (error) {
+    console.error(error);
+    toast('Impossible de préparer les photos');
+  }
+}
+
+function applyInventoryOcrList(mode) {
+  const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+  const raw = document.querySelector('#inventoryOcrText')?.value || inventoryPhotoOcrDraft.text || '';
+  if (!raw.trim()) return toast('Aucune référence détectée à appliquer');
+  applyImportedInventoryText(slot, mode, raw, 'photos');
+  inventoryPhotoOcrDraft = { status: 'idle', progress: 0, message: '', pages: [], text: '', matched: 0, unknown: 0 };
 }
 
 function productsForInventory(type, dateValue) {
@@ -1346,10 +1878,10 @@ function stopMultiPhotoScanner() {
   document.querySelector('#multiPhotoScanner')?.remove();
 }
 
-function cameraPageFromVideo(video, index, prefix = 'scan') {
+function cameraPageFromVideo(video, index, prefix = 'scan', options = {}) {
   const sourceWidth = video.videoWidth || 1280;
   const sourceHeight = video.videoHeight || 720;
-  const maxSide = 1400;
+  const maxSide = Number(options.maxSide || 1400);
   const ratio = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(sourceWidth * ratio));
@@ -1360,7 +1892,7 @@ function cameraPageFromVideo(video, index, prefix = 'scan') {
     id: uid(),
     fileName: `${prefix}-page-${String(index).padStart(2, '0')}.jpg`,
     fileType: 'image/jpeg',
-    fileData: canvas.toDataURL('image/jpeg', 0.72),
+    fileData: canvas.toDataURL('image/jpeg', Number(options.quality || 0.72)),
     scannedAt: new Date().toISOString()
   };
 }
@@ -1387,13 +1919,17 @@ async function openMultiPhotoScanner(kind, target) {
   if (!cameraSupported()) {
     toast('Appareil photo non disponible : utilise Importer plusieurs pages.');
     if (kind === 'order') return actions.triggerOrderImport(target.date, target.type);
+    if (kind === 'inventory') return actions.triggerInventoryPhotoImport();
     return actions.triggerReceiptImport(target.date, target.type, target.docType);
   }
   stopMultiPhotoScanner();
   const isOrder = kind === 'order';
-  const title = isOrder
-    ? `Bon de commande · ${orderTypeLabel(target.type)} · ${formatDateFr(target.date)}`
-    : `${receiptDocLabel(target.docType)} · ${target.docType === 'temperature' ? 'Livraison complète' : receiptTypeLabel(target.type)} · ${formatDateFr(target.date)}`;
+  const isInventory = kind === 'inventory';
+  const title = isInventory
+    ? `Pages d’inventaire · ${inventorySlotLabel(target.slot || 'monday_general')}`
+    : isOrder
+      ? `Bon de commande · ${orderTypeLabel(target.type)} · ${formatDateFr(target.date)}`
+      : `${receiptDocLabel(target.docType)} · ${target.docType === 'temperature' ? 'Livraison complète' : receiptTypeLabel(target.type)} · ${formatDateFr(target.date)}`;
   const overlay = document.createElement('div');
   overlay.id = 'multiPhotoScanner';
   overlay.className = 'scanner-backdrop';
@@ -1435,6 +1971,7 @@ async function openMultiPhotoScanner(kind, target) {
     stopMultiPhotoScanner();
     toast('Impossible d’ouvrir l’appareil photo. Utilise Importer plusieurs pages.');
     if (kind === 'order') return actions.triggerOrderImport(target.date, target.type);
+    if (kind === 'inventory') return actions.triggerInventoryPhotoImport();
     return actions.triggerReceiptImport(target.date, target.type, target.docType);
   }
 
@@ -1446,8 +1983,13 @@ async function openMultiPhotoScanner(kind, target) {
     const scanner = activeMultiPhotoScanner;
     const video = overlay.querySelector('#scannerVideo');
     if (!scanner || !video) return;
-    const prefix = scanner.kind === 'order' ? `bc-${scanner.target.date}-${scanner.target.type}` : `bl-${scanner.target.date}-${scanner.target.type || scanner.target.docType}`;
-    scanner.pages.push(cameraPageFromVideo(video, scanner.pages.length + 1, prefix));
+    const prefix = scanner.kind === 'inventory'
+      ? `inventaire-${scanner.target.slot || 'liste'}`
+      : scanner.kind === 'order'
+        ? `bc-${scanner.target.date}-${scanner.target.type}`
+        : `bl-${scanner.target.date}-${scanner.target.type || scanner.target.docType}`;
+    const captureOptions = scanner.kind === 'inventory' ? { maxSide: 2400, quality: 0.9 } : {};
+    scanner.pages.push(cameraPageFromVideo(video, scanner.pages.length + 1, prefix, captureOptions));
     const undoBtn = overlay.querySelector('#scannerUndo');
     if (undoBtn) undoBtn.disabled = false;
     refreshMultiPhotoScannerPreview();
@@ -1470,6 +2012,8 @@ async function openMultiPhotoScanner(kind, target) {
     stopMultiPhotoScanner();
     if (kindToSave === 'order') {
       persistScannedOrderPages(target.date, target.type, pages);
+    } else if (kindToSave === 'inventory') {
+      processInventoryOcrPages(pages);
     } else {
       persistScannedReceiptPages(target.date, target.type, target.docType || 'delivery', pages);
     }
@@ -2038,6 +2582,58 @@ function renderInventoryListManager() {
     </div>
 
     <div class="card" style="margin-top:18px;">
+      <div class="toolbar">
+        <div>
+          <h3>Mettre à jour avec les photos des pages</h3>
+          <p class="muted">Photographie ou importe toutes les pages. Le logiciel lit les références produit dans l’ordre des pages.</p>
+        </div>
+        <span class="badge info">OCR</span>
+      </div>
+      <input id="inventoryOcrInput" class="hidden-scan-input" type="file" accept="image/*" multiple />
+      <div class="form-actions wrap-actions">
+        <button data-action="startInventoryPhotoScan" class="success">Scanner toutes les pages</button>
+        <button data-action="triggerInventoryPhotoImport" class="secondary">Importer plusieurs photos</button>
+        ${inventoryPhotoOcrDraft.status !== 'idle' ? '<button data-action="clearInventoryPhotoOcr" class="danger-soft">Effacer le résultat</button>' : ''}
+      </div>
+      ${inventoryPhotoOcrDraft.status === 'processing' ? `
+        <div class="ocr-progress-card">
+          <div class="toolbar"><strong id="inventoryOcrMessage">${escapeHtml(inventoryPhotoOcrDraft.message || 'Reconnaissance en cours…')}</strong><span id="inventoryOcrProgressText">${escapeHtml(inventoryPhotoOcrDraft.progress)}%</span></div>
+          <div class="ocr-progress-track"><div id="inventoryOcrProgress" class="ocr-progress-fill" style="width:${escapeHtml(inventoryPhotoOcrDraft.progress)}%"></div></div>
+          <p class="muted">Garde cette page ouverte. La première utilisation peut prendre un peu plus de temps.</p>
+        </div>
+      ` : ''}
+      ${inventoryPhotoOcrDraft.status === 'done' ? `
+        <div class="alert ${inventoryPhotoOcrDraft.unknown ? 'warning' : 'success'}" style="margin-top:14px;">
+          <strong>${escapeHtml(inventoryPhotoOcrDraft.matched)} référence(s) reconnue(s)</strong>${inventoryPhotoOcrDraft.unknown ? ` · ${escapeHtml(inventoryPhotoOcrDraft.unknown)} référence(s) inconnue(s) à vérifier` : ''}. Vérifie toujours le texte et l’ordre avant de remplacer la liste.
+        </div>
+        <label class="wide ocr-result-label">Résultat modifiable
+          <textarea id="inventoryOcrText" rows="10">${escapeHtml(inventoryPhotoOcrDraft.text || '')}</textarea>
+        </label>
+        <div class="form-actions wrap-actions">
+          <button data-action="appendInventoryOcrList" class="secondary">Ajouter à la fin</button>
+          <button data-action="replaceInventoryOcrList" class="danger-soft">Remplacer la liste complète</button>
+        </div>
+      ` : ''}
+      ${inventoryPhotoOcrDraft.status === 'error' ? `<div class="alert danger" style="margin-top:14px;">${escapeHtml(inventoryPhotoOcrDraft.message || 'La reconnaissance a échoué.')}</div>` : ''}
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar">
+        <div>
+          <h3>Mettre à jour avec un PDF d’inventaire / bon de commande</h3>
+          <p class="muted">Importe le PDF complet. Le logiciel lit les références, applique l’ordre du bon, détecte les nouveaux produits, les références absentes et les changements probables de référence ou conditionnement.</p>
+        </div>
+        <span class="badge info">PDF</span>
+      </div>
+      <input id="inventoryPdfInput" class="hidden-scan-input" type="file" accept="application/pdf,.pdf" multiple />
+      <div class="form-actions wrap-actions">
+        <button data-action="triggerInventoryPdfImport" class="success">Importer PDF et analyser</button>
+        ${inventoryPdfImportDraft.status !== 'idle' ? '<button data-action="clearInventoryPdfImport" class="danger-soft">Effacer l’analyse PDF</button>' : ''}
+      </div>
+      ${renderInventoryPdfReview()}
+    </div>
+
+    <div class="card" style="margin-top:18px;">
       <div class="toolbar"><h3>Importer / remplacer depuis un bon de commande</h3><span class="badge info">Copier-coller</span></div>
       <p class="muted">Colle les lignes du bon de commande dans l’ordre souhaité. Le logiciel retrouve les produits par référence. Les références inconnues sont créées automatiquement puis ajoutées à cette liste.</p>
       <textarea id="inventoryImportText" rows="8" placeholder="Exemple :\n00005.312 VIANDE 10/1 300 CT\n00006.246 VIANDE 4/1 120 CT\n..."></textarea>
@@ -2091,7 +2687,7 @@ function renderInventory() {
     return `
       <tr>
         <td class="order-cell"><span class="badge info">${index + 1}</span></td>
-        <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')} · ${escapeHtml(p.category || '-')} · ${escapeHtml(p.packageSize || '')}</span></td>
+        <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.category || '-')} · ${escapeHtml(p.packageSize || '')}</span></td>
         <td>${number(theoretical)} ${escapeHtml(p.unit || '')}</td>
         <td><input class="count-input" data-count="${p.id}" type="number" step="0.01" min="0" inputmode="decimal" value="${escapeHtml(countValue)}" placeholder="Quantité" /></td>
         <td>${escapeHtml(p.unit || '')}</td>
@@ -3651,6 +4247,33 @@ const actions = {
   replaceInventoryImportList() {
     const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
     applyImportedInventoryList(slot, 'replace');
+  },
+  startInventoryPhotoScan() {
+    const slot = document.querySelector('#inventoryListSlot')?.value || 'monday_general';
+    return openMultiPhotoScanner('inventory', { slot });
+  },
+  triggerInventoryPhotoImport() {
+    document.querySelector('#inventoryOcrInput')?.click();
+  },
+  triggerInventoryPdfImport() {
+    document.querySelector('#inventoryPdfInput')?.click();
+  },
+  clearInventoryPdfImport() {
+    inventoryPdfImportDraft = { status: 'idle', slot: '', fileName: '', lines: [], exact: [], replacements: [], newItems: [], missing: [], message: '' };
+    render();
+  },
+  applyInventoryPdfImport() {
+    applyInventoryPdfImport();
+  },
+  clearInventoryPhotoOcr() {
+    inventoryPhotoOcrDraft = { status: 'idle', progress: 0, message: '', pages: [], text: '', matched: 0, unknown: 0 };
+    render();
+  },
+  appendInventoryOcrList() {
+    applyInventoryOcrList('append');
+  },
+  replaceInventoryOcrList() {
+    applyInventoryOcrList('replace');
   },
   selectInventorySlot(date, type) {
     selectedInventorySlot = { date, type };
