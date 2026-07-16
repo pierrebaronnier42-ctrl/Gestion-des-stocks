@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.41.0-inventory-pdf-delivery-timing';
+const APP_VERSION = '1.42.0-product-sequence-month-end';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -129,7 +129,7 @@ let inventorySubPage = 'entry';
 let showArchivedProducts = false;
 let productSubPage = 'active';
 let productCategoryFilter = 'all';
-let productSortMode = 'inventory';
+let productSortMode = 'sequence';
 let inventoryDraftValues = {};
 let selectedMonthEndMonth = today().slice(0, 7);
 let monthEndDraftValues = {};
@@ -231,6 +231,10 @@ function migrateProduct(product) {
   if (!Array.isArray(base.inventorySlots)) base.inventorySlots = [];
   if (!base.inventoryOrders || typeof base.inventoryOrders !== 'object' || Array.isArray(base.inventoryOrders)) base.inventoryOrders = {};
   if (base.monthEndOrder === undefined || base.monthEndOrder === null) base.monthEndOrder = '';
+  if (base.sequence === undefined || base.sequence === null || base.sequence === '') {
+    const legacyOrder = Number(base.monthEndOrder || 0);
+    base.sequence = legacyOrder >= 1000 ? legacyOrder : '';
+  }
 
   let inventoryTypes = [];
   if (Array.isArray(base.inventoryTypes) && base.inventoryTypes.length) inventoryTypes = base.inventoryTypes;
@@ -378,9 +382,9 @@ function defaultMonthEndOrder(sku) {
 }
 
 function monthEndProductOrder(product = {}) {
-  const manual = Number(product.monthEndOrder || 0);
+  const manual = productSequenceValue(product);
   if (manual > 0) return manual;
-  return defaultMonthEndOrder(product.sku);
+  return displayProductSequence(product);
 }
 
 function monthEndProductSort(a, b) {
@@ -400,10 +404,10 @@ function monthEndDraftKey(month) {
 
 function monthEndOrderValue(product = {}, draftForMonth = {}) {
   const draftOrder = draftForMonth[product.id]?.order;
-  const raw = draftOrder !== undefined ? draftOrder : product.monthEndOrder;
+  const raw = draftOrder !== undefined ? draftOrder : productSequenceValue(product);
   const manual = Number(raw || 0);
   if (manual > 0) return manual;
-  return defaultMonthEndOrder(product.sku);
+  return displayProductSequence(product);
 }
 
 function monthEndProductSortWithDraft(draftForMonth = {}) {
@@ -519,6 +523,7 @@ function ensureInventoryCatalog(targetState) {
       });
     }
   });
+  ensureProductSequences(targetState);
   return targetState;
 }
 
@@ -817,6 +822,34 @@ function bindPageEvents() {
     });
   }
 
+  document.querySelectorAll('[data-product-sequence]').forEach(input => {
+    input.addEventListener('change', event => {
+      const productId = event.currentTarget.dataset.productSequence;
+      const product = getProduct(productId);
+      if (!product) return;
+      const previous = productSequenceValue(product);
+      const next = Number(event.currentTarget.value || 0);
+      if (!next || next < 1000 || next > 9999) {
+        event.currentTarget.value = previous || displayProductSequence(product);
+        return toast('La séquence doit être un numéro à 4 chiffres');
+      }
+      const duplicates = wouldDuplicateProductSequence(productId, next);
+      if (duplicates.length) {
+        const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(duplicates) + '\n\nValider quand même ?');
+        if (!ok) {
+          event.currentTarget.value = previous || displayProductSequence(product);
+          return;
+        }
+      }
+      product.sequence = next;
+      product.monthEndOrder = next;
+      syncProductSequenceToMonthEndDrafts(product.id, next);
+      saveState();
+      render();
+      toast('Séquence produit mise à jour');
+    });
+  });
+
   const inventoryCountInputs = Array.from(document.querySelectorAll('[data-count]'));
   let lastInventoryCountFocus = null;
   function focusNextInventoryCount(index) {
@@ -935,6 +968,125 @@ function bindPageEvents() {
 const getSupplier = id => state.suppliers.find(s => s.id === id);
 const getZone = id => state.zones.find(z => z.id === id);
 const getProduct = id => state.products.find(p => p.id === id);
+
+
+function zoneSequenceBase(zoneId = '') {
+  const zone = getZone(zoneId) || state.zones.find(z => z.id === zoneId) || null;
+  const codeMatch = String(zone?.code || '').match(/(\d{3,5})/);
+  if (codeMatch) return Number(codeMatch[1]);
+  const sequence = Number(zone?.sequence || 0);
+  if (sequence > 0) return sequence * 1000;
+  return 9000;
+}
+
+function productSequenceValue(product = {}) {
+  const direct = Number(product.sequence || 0);
+  if (direct > 0) return direct;
+  const legacy = Number(product.monthEndOrder || 0);
+  if (legacy >= 1000) return legacy;
+  return 0;
+}
+
+function displayProductSequence(product = {}) {
+  const direct = productSequenceValue(product);
+  return direct > 0 ? direct : nextSequenceForZone(product.storageZoneId, product.id);
+}
+
+function nextSequenceForZone(zoneId = '', excludeProductId = '') {
+  const base = zoneSequenceBase(zoneId);
+  const used = new Set(state.products
+    .filter(product => product.id !== excludeProductId)
+    .map(productSequenceValue)
+    .filter(value => value > 0));
+  let next = base + 1;
+  while (used.has(next)) next += 1;
+  return next;
+}
+
+function ensureProductSequences(targetState = state) {
+  const groups = new Map();
+  (targetState.products || []).forEach(product => {
+    const value = Number(product.sequence || 0);
+    if (value > 0) return;
+    const legacy = Number(product.monthEndOrder || 0);
+    if (legacy >= 1000) {
+      product.sequence = legacy;
+      return;
+    }
+    const zoneId = product.storageZoneId || '';
+    if (!groups.has(zoneId)) groups.set(zoneId, []);
+    groups.get(zoneId).push(product);
+  });
+  const zonesForState = targetState.zones || [];
+  const findZone = zoneId => zonesForState.find(zone => zone.id === zoneId);
+  const baseForZone = zoneId => {
+    const zone = findZone(zoneId);
+    const codeMatch = String(zone?.code || '').match(/(\d{3,5})/);
+    if (codeMatch) return Number(codeMatch[1]);
+    const sequence = Number(zone?.sequence || 0);
+    if (sequence > 0) return sequence * 1000;
+    return 9000;
+  };
+  const used = new Set((targetState.products || []).map(productSequenceValue).filter(value => value > 0));
+  groups.forEach((products, zoneId) => {
+    let next = baseForZone(zoneId) + 1;
+    products
+      .sort((a, b) => Number(a.monthEndOrder || defaultMonthEndOrder(a.sku) || 999999) - Number(b.monthEndOrder || defaultMonthEndOrder(b.sku) || 999999)
+        || String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' }))
+      .forEach(product => {
+        while (used.has(next)) next += 1;
+        product.sequence = next;
+        if (!Number(product.monthEndOrder || 0) || Number(product.monthEndOrder || 0) < 1000) product.monthEndOrder = next;
+        used.add(next);
+        next += 1;
+      });
+  });
+}
+
+function getProductSequenceDuplicates(products = state.products.filter(product => product.active !== false), valuesById = {}) {
+  const groups = new Map();
+  products.forEach(product => {
+    const raw = valuesById[product.id] !== undefined ? valuesById[product.id] : productSequenceValue(product);
+    const sequence = Number(raw || 0);
+    if (!Number.isFinite(sequence) || sequence <= 0) return;
+    const key = String(sequence);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(product);
+  });
+  return Array.from(groups.entries())
+    .filter(([, items]) => items.length > 1)
+    .map(([sequence, items]) => ({ sequence, items }));
+}
+
+function productSequenceDuplicateMap(products = state.products.filter(product => product.active !== false), valuesById = {}) {
+  const map = new Map();
+  getProductSequenceDuplicates(products, valuesById).forEach(group => {
+    group.items.forEach(product => map.set(product.id, group.sequence));
+  });
+  return map;
+}
+
+function duplicateProductSequenceMessage(duplicates = []) {
+  if (!duplicates.length) return '';
+  return duplicates.map(group => {
+    const names = group.items.slice(0, 4).map(product => product.name || product.sku || 'Produit').join(', ');
+    const extra = group.items.length > 4 ? `, +${group.items.length - 4} autre(s)` : '';
+    return `Séquence ${group.sequence} : ${names}${extra}`;
+  }).join('\n');
+}
+
+function syncProductSequenceToMonthEndDrafts(productId, sequence) {
+  Object.values(monthEndDraftValues || {}).forEach(draft => {
+    if (draft && draft[productId]) draft[productId].order = sequence;
+  });
+}
+
+function wouldDuplicateProductSequence(productId, sequence) {
+  const product = getProduct(productId);
+  const activeProducts = state.products.filter(item => item.active !== false || item.id === productId);
+  const values = { [productId]: sequence };
+  return getProductSequenceDuplicates(activeProducts, values).filter(group => group.items.some(item => item.id === productId));
+}
 
 function stockByProduct(productId) {
   return state.movements
@@ -1128,6 +1280,8 @@ function ensureProductInInventorySlot(product, slot, order) {
 
 function createProductFromImportedLine(line, slot, order) {
   const def = inventorySlotDefinition(slot);
+  const zoneId = zoneIdFromImportLabel(line.zoneLabel);
+  const sequence = nextSequenceForZone(zoneId);
   const product = migrateProduct({
     id: uid(),
     sku: line.sku || '',
@@ -1138,7 +1292,9 @@ function createProductFromImportedLine(line, slot, order) {
     minStock: 0,
     lastPrice: 0,
     supplierId: '',
-    storageZoneId: zoneIdFromImportLabel(line.zoneLabel),
+    storageZoneId: zoneId,
+    sequence,
+    monthEndOrder: sequence,
     inventorySlots: [slot],
     inventoryOrders: { [slot]: order },
     active: true,
@@ -1398,25 +1554,34 @@ function renderInventoryPdfReview() {
     </tr>
   `).join('') || `<tr><td colspan="3" class="empty">Aucune référence déjà connue.</td></tr>`;
 
-  const replacementRows = inventoryPdfImportDraft.replacements.map((item, index) => `
+  const replacementRows = inventoryPdfImportDraft.replacements.map((item, index) => {
+    const suggestedZone = zoneIdFromImportLabel(item.zoneLabel) || '';
+    const suggestedSequence = nextSequenceForZone(suggestedZone);
+    return `
     <tr>
       <td><input class="mini-input" data-pdf-replacement-order="${index}" type="number" min="1" step="1" value="${escapeHtml(item.order)}" /></td>
       <td><strong>${escapeHtml(item.name)}</strong><br><span class="muted">Nouvelle réf. ${escapeHtml(item.sku)} · ${escapeHtml(item.packageSize || '-')}</span></td>
       <td><strong>${escapeHtml(item.oldName)}</strong><br><span class="muted">Ancienne réf. ${escapeHtml(item.oldSku || '-')} · ${escapeHtml(item.oldPackageSize || '-')}</span></td>
       <td><select data-pdf-replacement-action="${index}"><option value="replace" selected>Remplacer l’ancienne référence</option><option value="new">Créer comme nouveau produit</option></select></td>
-      <td><select data-pdf-replacement-zone="${index}">${zoneOptionsHtml(zoneIdFromImportLabel(item.zoneLabel) || '', true)}</select></td>
+      <td><select data-pdf-replacement-zone="${index}">${zoneOptionsHtml(suggestedZone, true)}</select></td>
+      <td><input class="mini-input" data-pdf-replacement-sequence="${index}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(suggestedSequence)}" /></td>
     </tr>
-  `).join('') || `<tr><td colspan="5" class="empty">Aucun changement de référence probable détecté.</td></tr>`;
+  `;
+  }).join('') || `<tr><td colspan="6" class="empty">Aucun changement de référence probable détecté.</td></tr>`;
 
-  const newRows = inventoryPdfImportDraft.newItems.map((item, index) => `
+  const newRows = inventoryPdfImportDraft.newItems.map((item, index) => {
+    const suggestedSequence = nextSequenceForZone(item.storageZoneId || '');
+    return `
     <tr>
       <td><input class="mini-input" data-pdf-new-order="${index}" type="number" min="1" step="1" value="${escapeHtml(item.order)}" /></td>
       <td><input data-pdf-new-sku="${index}" value="${escapeHtml(item.sku)}" /></td>
       <td><input data-pdf-new-name="${index}" value="${escapeHtml(item.name)}" /></td>
       <td><input data-pdf-new-package="${index}" value="${escapeHtml(item.packageSize || '')}" /></td>
       <td><select data-pdf-new-zone="${index}">${zoneOptionsHtml(item.storageZoneId || '', true)}</select></td>
+      <td><input class="mini-input" data-pdf-new-sequence="${index}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(suggestedSequence)}" /></td>
     </tr>
-  `).join('') || `<tr><td colspan="5" class="empty">Aucun nouveau produit détecté.</td></tr>`;
+  `;
+  }).join('') || `<tr><td colspan="6" class="empty">Aucun nouveau produit détecté.</td></tr>`;
 
   const missingRows = inventoryPdfImportDraft.missing.map((item, index) => `
     <tr>
@@ -1434,17 +1599,17 @@ function renderInventoryPdfReview() {
     <div class="pdf-review-grid">
       <div class="card inset-card">
         <h4>1. Références connues</h4>
-        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Produit</th><th>Changement</th></tr></thead><tbody>${exactRows}</tbody></table></div>
+        <div class="table-wrap compact-table"><table><thead><tr><th>Ordre BC</th><th>Produit</th><th>Changement</th></tr></thead><tbody>${exactRows}</tbody></table></div>
       </div>
       <div class="card inset-card">
         <h4>2. Changements de référence possibles</h4>
         <p class="muted">Le logiciel se base sur le nom produit pour repérer une référence remplacée.</p>
-        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Nouveau PDF</th><th>Produit actuel suggéré</th><th>Action</th><th>Zone si nouveau</th></tr></thead><tbody>${replacementRows}</tbody></table></div>
+        <div class="table-wrap compact-table"><table><thead><tr><th>Ordre BC</th><th>Nouveau PDF</th><th>Produit actuel suggéré</th><th>Action</th><th>Zone si nouveau</th><th>Séquence produit</th></tr></thead><tbody>${replacementRows}</tbody></table></div>
       </div>
       <div class="card inset-card">
         <h4>3. Nouveaux produits</h4>
-        <p class="muted">Choisis la zone de stockage avant d’appliquer. Le N° séq. correspond à l’ordre du bon de commande.</p>
-        <div class="table-wrap compact-table"><table><thead><tr><th>N° séq.</th><th>Réf.</th><th>Produit</th><th>Conditionnement</th><th>Zone</th></tr></thead><tbody>${newRows}</tbody></table></div>
+        <p class="muted">Choisis la zone de stockage et la séquence produit. L’ordre BC reste indépendant des listes de Fin de mois.</p>
+        <div class="table-wrap compact-table"><table><thead><tr><th>Ordre BC</th><th>Réf.</th><th>Produit</th><th>Conditionnement</th><th>Zone</th><th>Séquence produit</th></tr></thead><tbody>${newRows}</tbody></table></div>
       </div>
       <div class="card inset-card">
         <h4>4. Produits absents du nouveau PDF</h4>
@@ -1459,7 +1624,7 @@ function renderInventoryPdfReview() {
   `;
 }
 
-function createProductFromInventoryPdfItem(item, slot, order, zoneId) {
+function createProductFromInventoryPdfItem(item, slot, order, zoneId, sequence = 0) {
   const def = inventorySlotDefinition(slot);
   const product = migrateProduct({
     id: uid(),
@@ -1473,6 +1638,8 @@ function createProductFromInventoryPdfItem(item, slot, order, zoneId) {
     lastPrice: 0,
     supplierId: '',
     storageZoneId: zoneId || '',
+    sequence: Number(sequence || 0) || nextSequenceForZone(zoneId || ''),
+    monthEndOrder: Number(sequence || 0) || nextSequenceForZone(zoneId || ''),
     inventorySlots: [slot],
     inventoryOrders: { [slot]: Number(order || 0) || 1 },
     active: true,
@@ -1499,6 +1666,46 @@ function applyInventoryPdfImport() {
     if (action === 'new' && !zoneId) newRowsMissingZone.push(`remplacement ${index + 1}`);
   });
   if (newRowsMissingZone.length) return toast('Choisis une zone pour les nouveaux produits avant d’appliquer');
+  const invalidSequences = [];
+  draft.replacements.forEach((item, index) => {
+    const action = document.querySelector(`[data-pdf-replacement-action="${index}"]`)?.value || 'replace';
+    if (action !== 'new') return;
+    const sequence = Number(document.querySelector(`[data-pdf-replacement-sequence="${index}"]`)?.value || 0);
+    if (sequence < 1000 || sequence > 9999) invalidSequences.push(`remplacement ${index + 1}`);
+  });
+  draft.newItems.forEach((item, index) => {
+    const sequence = Number(document.querySelector(`[data-pdf-new-sequence="${index}"]`)?.value || 0);
+    if (sequence < 1000 || sequence > 9999) invalidSequences.push(index + 1);
+  });
+  if (invalidSequences.length) return toast('Chaque nouveau produit doit avoir une séquence à 4 chiffres');
+
+  const projectedNewProducts = [];
+  draft.replacements.forEach((item, index) => {
+    const action = document.querySelector(`[data-pdf-replacement-action="${index}"]`)?.value || 'replace';
+    if (action !== 'new') return;
+    projectedNewProducts.push({
+      id: `new-pdf-replacement-${index}`,
+      name: item.name || 'Nouveau produit',
+      sku: item.sku || '',
+      sequence: Number(document.querySelector(`[data-pdf-replacement-sequence="${index}"]`)?.value || 0),
+      active: true
+    });
+  });
+  draft.newItems.forEach((item, index) => {
+    projectedNewProducts.push({
+      id: `new-pdf-${index}`,
+      name: document.querySelector(`[data-pdf-new-name="${index}"]`)?.value || item.name || 'Nouveau produit',
+      sku: document.querySelector(`[data-pdf-new-sku="${index}"]`)?.value || item.sku || '',
+      sequence: Number(document.querySelector(`[data-pdf-new-sequence="${index}"]`)?.value || 0),
+      active: true
+    });
+  });
+  const sequenceDuplicates = getProductSequenceDuplicates(state.products.filter(product => product.active !== false).concat(projectedNewProducts))
+    .filter(group => group.items.some(product => String(product.id || '').startsWith('new-pdf')));
+  if (sequenceDuplicates.length) {
+    const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(sequenceDuplicates) + '\n\nValider quand même ?');
+    if (!ok) return;
+  }
 
   cacheCurrentInventoryDraft(selectedInventorySlot?.date || today(), selectedInventorySlot?.type || 'general');
 
@@ -1529,7 +1736,8 @@ function applyInventoryPdfImport() {
       ensureProductInInventorySlot(product, slot, order);
     } else {
       const zoneId = document.querySelector(`[data-pdf-replacement-zone="${index}"]`)?.value || '';
-      createProductFromInventoryPdfItem(item, slot, order, zoneId);
+      const sequence = Number(document.querySelector(`[data-pdf-replacement-sequence="${index}"]`)?.value || 0);
+      createProductFromInventoryPdfItem(item, slot, order, zoneId, sequence);
     }
   });
 
@@ -1539,7 +1747,8 @@ function applyInventoryPdfImport() {
     const packageSize = document.querySelector(`[data-pdf-new-package="${index}"]`)?.value || item.packageSize;
     const order = Number(document.querySelector(`[data-pdf-new-order="${index}"]`)?.value || item.order || index + 1);
     const zoneId = document.querySelector(`[data-pdf-new-zone="${index}"]`)?.value || '';
-    createProductFromInventoryPdfItem({ ...item, sku, name, packageSize }, slot, order, zoneId);
+    const sequence = Number(document.querySelector(`[data-pdf-new-sequence="${index}"]`)?.value || 0);
+    createProductFromInventoryPdfItem({ ...item, sku, name, packageSize }, slot, order, zoneId, sequence);
   });
 
   draft.missing.forEach((item, index) => {
@@ -2938,20 +3147,29 @@ function baseProductSort(a, b) {
   return productInventoryOrder(a, firstSlotA) - productInventoryOrder(b, firstSlotB) || String(a.name || '').localeCompare(String(b.name || ''));
 }
 
+function productSequenceSort(a, b) {
+  return displayProductSequence(a) - displayProductSequence(b)
+    || String(productCategoryLabel(a) || '').localeCompare(String(productCategoryLabel(b) || ''), 'fr', { sensitivity: 'base' })
+    || String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' });
+}
+
 function productSort(a, b) {
   if (productSortMode === 'category') {
-    return productCategoryLabel(a).localeCompare(productCategoryLabel(b), 'fr', { sensitivity: 'base' }) || baseProductSort(a, b);
+    return productCategoryLabel(a).localeCompare(productCategoryLabel(b), 'fr', { sensitivity: 'base' }) || productSequenceSort(a, b);
   }
   if (productSortMode === 'name') {
     return String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' });
   }
-  return baseProductSort(a, b);
+  if (productSortMode === 'inventory') {
+    return baseProductSort(a, b);
+  }
+  return productSequenceSort(a, b);
 }
 
 function productSearchText(product = {}) {
   const slots = productInventorySlots(product).map(inventorySlotLabel).join(' ');
   const zone = getZone(product.storageZoneId)?.name || product.storageLabel || '';
-  return [product.sku, product.name, productCategoryLabel(product), product.unit, product.packageSize, zone, slots].join(' ').toLowerCase();
+  return [product.sku, product.name, productSequenceValue(product), productCategoryLabel(product), product.unit, product.packageSize, zone, slots].join(' ').toLowerCase();
 }
 
 function productMatchesSearch(product) {
@@ -2971,14 +3189,19 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
   let rows = state.products.slice();
   if (archivedOnly) rows = rows.filter(p => p.active === false);
   if (activeOnly) rows = rows.filter(p => p.active !== false);
-  return rows
-    .filter(productMatchesSearch)
-    .sort(productSort)
-    .map(p => {
+  const duplicateMap = productSequenceDuplicateMap(state.products.filter(product => product.active !== false));
+  const visibleRows = rows.filter(productMatchesSearch).sort(productSort);
+  return visibleRows.map(p => {
       const archived = p.active === false;
+      const duplicate = !archived && duplicateMap.has(p.id);
+      const sequence = displayProductSequence(p);
       return `
-        <tr class="${archived ? 'archived-row' : ''}">
+        <tr class="${archived ? 'archived-row' : ''} ${duplicate ? 'duplicate-row' : ''}">
           <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')}</span></td>
+          <td>
+            <input class="mini-input sequence-input ${duplicate ? 'duplicate-input' : ''}" data-product-sequence="${escapeHtml(p.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(sequence)}" ${archived ? 'disabled' : ''} />
+            ${duplicate ? '<br><span class="badge warning">Doublon validable</span>' : ''}
+          </td>
           <td>${escapeHtml(productCategoryLabel(p))}</td>
           <td>${inventorySlotBadges(p) || '<span class="muted">Non affecté</span>'}</td>
           <td>${number(stockByProduct(p.id))} ${escapeHtml(p.unit || '')}<br><span class="muted">${escapeHtml(p.packageSize || '')}</span></td>
@@ -2993,7 +3216,7 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
           </td>
         </tr>
       `;
-    }).join('') || `<tr><td colspan="8" class="empty">Aucun produit ne correspond aux filtres.</td></tr>`;
+    }).join('') || `<tr><td colspan="9" class="empty">Aucun produit ne correspond aux filtres.</td></tr>`;
 }
 
 function renderProducts() {
@@ -3007,6 +3230,14 @@ function renderProducts() {
   const filteredCount = viewProducts.filter(productMatchesSearch).length;
   const categoryOptions = productCategoryOptions(viewProducts);
   const isArchivedView = productSubPage === 'archived';
+  const sequenceDuplicates = getProductSequenceDuplicates(activeProducts);
+  const sequenceAlert = sequenceDuplicates.length ? `
+    <div class="alert warning" style="margin-top:18px;">
+      <strong>Attention : plusieurs produits actifs ont la même séquence.</strong><br>
+      ${escapeHtml(duplicateProductSequenceMessage(sequenceDuplicates)).split('\n').join('<br>')}<br>
+      <span class="muted">Ce n’est pas bloquant : tu peux valider un doublon si les produits doivent réellement partager le même numéro.</span>
+    </div>
+  ` : '';
   return `
     <div class="grid grid-4">
       <div class="card kpi"><div><span>Produits actifs</span><strong>${activeProducts.length}</strong></div><span class="badge info">Base</span></div>
@@ -3015,6 +3246,8 @@ function renderProducts() {
       <div class="card kpi"><div><span>Stocks bas / rupture</span><strong>${lowStock}</strong></div><span class="badge warning">À suivre</span></div>
     </div>
 
+    ${sequenceAlert}
+
     <div class="card" style="margin-top:18px;">
       <div class="toolbar">
         <div class="toolbar-left">
@@ -3022,6 +3255,7 @@ function renderProducts() {
           <input class="search" data-search placeholder="Rechercher produit, référence, catégorie, planning..." />
           <select class="filter-select" data-category-filter aria-label="Filtrer par catégorie">${categoryOptions}</select>
           <select class="filter-select" data-product-sort aria-label="Trier les produits">
+            <option value="sequence">Séquence / Fin de mois</option>
             <option value="inventory">Ordre inventaire / bon de commande</option>
             <option value="category">Catégorie A → Z</option>
             <option value="name">Nom A → Z</option>
@@ -3038,7 +3272,7 @@ function renderProducts() {
       <p class="muted">
         ${isArchivedView
           ? 'Sous-page dédiée aux produits archivés. Ils ne sortent plus dans les inventaires, mais tu peux les modifier, les réintégrer ou les supprimer définitivement.'
-          : 'Page dédiée aux produits de base. Utilise le bouton Produits archivés pour ouvrir la sous-page des anciennes références. La recherche fonctionne avec le filtre de catégorie.'}
+          : 'Page dédiée aux produits de base. La colonne Séquence définit le N° de tri de Fin de mois, indépendamment des listes d’inventaire et bons de commande.'}
       </p>
     </div>
 
@@ -3047,7 +3281,7 @@ function renderProducts() {
         <h3>${isArchivedView ? 'Archive produits' : 'Catalogue produits actifs'}</h3>
         <span class="muted">${filteredCount} affiché(s) · ${isArchivedView ? archivedProducts.length + ' archivé(s)' : activeProducts.length + ' actif(s) · ' + noPlan + ' sans planning'}</span>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Catégorie</th><th>Planning inventaire</th><th>Stock / conditionnement</th><th>Mini / Maxi</th><th>Zone principale</th><th>État</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Séquence</th><th>Catégorie</th><th>Planning inventaire</th><th>Stock / conditionnement</th><th>Mini / Maxi</th><th>Zone principale</th><th>État</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
   `;
 }
@@ -3473,7 +3707,7 @@ function renderMonthEnd() {
   const lineMap = new Map((session?.lines || []).map(line => [line.productId, line]));
   const draftForMonth = monthEndDraftValues[monthEndDraftKey(month)] || {};
   const activeProducts = state.products.filter(p => p.active !== false).sort(monthEndProductSortWithDraft(draftForMonth));
-  const filteredProducts = filterRows(activeProducts, ['sku', 'name', 'category', 'storageLabel', 'packageSize']).sort(monthEndProductSortWithDraft(draftForMonth));
+  const filteredProducts = filterRows(activeProducts, ['sku', 'name', 'category', 'storageLabel', 'packageSize', 'sequence']).sort(monthEndProductSortWithDraft(draftForMonth));
   const duplicates = getMonthEndDuplicateOrders(activeProducts, draftForMonth);
   const duplicateOrders = new Set(duplicates.map(group => String(group.order)));
   const duplicateAlert = duplicates.length ? `
@@ -3491,7 +3725,7 @@ function renderMonthEnd() {
     return `
       <tr class="${isDuplicate ? 'duplicate-row' : ''}">
         <td>
-          <input class="sort-input ${isDuplicate ? 'duplicate-input' : ''}" data-month-order="${escapeHtml(product.id)}" type="number" min="1" step="1" value="${escapeHtml((draftLine.order ?? product.monthEndOrder) || monthEndProductOrder(product))}" />
+          <input class="sort-input ${isDuplicate ? 'duplicate-input' : ''}" data-month-order="${escapeHtml(product.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml((draftLine.order ?? productSequenceValue(product)) || monthEndProductOrder(product))}" />
           ${isDuplicate ? '<br><span class="badge danger">Doublon</span>' : ''}
         </td>
         <td><strong>${escapeHtml(product.name)}</strong><br><span class="muted">${escapeHtml(product.sku || 'Sans réf.')} · ${escapeHtml(product.packageSize || '')}</span></td>
@@ -3524,11 +3758,11 @@ function renderMonthEnd() {
         <div>
           <p class="eyebrow">Inventaire total</p>
           <h3>Fin de mois</h3>
-          <p class="muted">Liste indépendante de la page Inventaire. Les numéros de tri ici peuvent être différents des bons de commande.</p>
+          <p class="muted">Le N° tri vient de la colonne Séquence dans Produits. Il reste indépendant des listes Inventaire / bons de commande.</p>
         </div>
         <div class="toolbar-right">
           <label class="inline-label">Mois<input data-month-end-month type="month" value="${escapeHtml(month)}" /></label>
-          <button data-action="refreshMonthEndOrder" class="secondary">Rafraîchir l’ordre</button>
+          <button data-action="refreshMonthEndOrder" class="secondary">Recharger les séquences Produits</button>
           <button data-action="saveMonthEndInventory" class="success">Enregistrer</button>
           <button data-action="exportCsv" data-type="monthEnd" class="secondary">Exporter CSV</button>
           <button data-action="exportMonthEndPdf" class="secondary">Exporter PDF</button>
@@ -3668,6 +3902,7 @@ const actions = {
         <label>Catégorie<input name="category" value="${escapeHtml(productCategoryLabel(p) === '-' ? '' : productCategoryLabel(p))}" placeholder="Frais, sec, surgelé, HUB..." /></label>
         <label>Unité de comptage<input name="unit" value="${escapeHtml(p.unit || 'colis')}" placeholder="colis, carton, kg, bidon..." /></label>
         <label>Conditionnement<input name="packageSize" value="${escapeHtml(p.packageSize || '')}" placeholder="Ex: 300 CT" /></label>
+        <label>Séquence / N° tri<input name="sequence" type="number" min="1000" max="9999" step="1" value="${escapeHtml(id ? displayProductSequence(p) : '')}" placeholder="Ex: 1001" /></label>
         <label class="wide">Planning inventaire<div class="checkbox-grid slots-grid">${inventoryPlanChecks(p)}</div></label>
         <label class="wide">Ordre dans les inventaires<div class="checkbox-grid slots-grid order-grid">${inventoryOrderInputs(p)}</div></label>
         <label>Stock minimum<input name="minStock" type="number" step="0.01" min="0" value="${escapeHtml(p.minStock || 0)}" /></label>
@@ -3694,6 +3929,8 @@ const actions = {
         lastPrice: Number(data.lastPrice || 0),
         supplierId: data.supplierId,
         storageZoneId: data.storageZoneId,
+        sequence: Number(data.sequence || 0) || nextSequenceForZone(data.storageZoneId, p.id || ''),
+        monthEndOrder: Number(data.sequence || 0) || nextSequenceForZone(data.storageZoneId, p.id || ''),
         active: data.active === 'true',
         inventorySlots: selectedSlots,
         inventoryTypes: selectedTypes.length ? selectedTypes : ['general'],
@@ -3705,8 +3942,20 @@ const actions = {
         storageNote: data.storageNote.trim()
       };
       const finalItem = normalizeHubProductCategory(item);
+      if (Number(finalItem.sequence || 0) < 1000 || Number(finalItem.sequence || 0) > 9999) {
+        return toast('La séquence doit être un numéro à 4 chiffres');
+      }
+      const activeProducts = state.products.filter(product => product.active !== false || product.id === finalItem.id);
+      const sequenceDuplicates = getProductSequenceDuplicates(
+        id ? activeProducts.map(product => product.id === id ? finalItem : product) : activeProducts.concat([finalItem])
+      ).filter(group => group.items.some(product => product.id === finalItem.id));
+      if (sequenceDuplicates.length) {
+        const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(sequenceDuplicates) + '\n\nValider quand même ?');
+        if (!ok) return;
+      }
       if (id) state.products = state.products.map(x => x.id === id ? finalItem : x);
       else state.products.push(finalItem);
+      syncProductSequenceToMonthEndDrafts(finalItem.id, finalItem.sequence);
       saveState(); closeModal(); render(); toast('Produit enregistré');
     });
   },
@@ -3720,7 +3969,14 @@ const actions = {
   restoreProduct(id) {
     const product = getProduct(id);
     if (!product) return;
-    state.products = state.products.map(p => p.id === id ? { ...p, active: true, restoredAt: new Date().toISOString() } : p);
+    const restoredProduct = { ...product, active: true, restoredAt: new Date().toISOString() };
+    const activeProducts = state.products.filter(item => item.active !== false || item.id === id).map(item => item.id === id ? restoredProduct : item);
+    const duplicates = getProductSequenceDuplicates(activeProducts).filter(group => group.items.some(item => item.id === id));
+    if (duplicates.length) {
+      const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(duplicates) + '\n\nRéintégrer quand même ?');
+      if (!ok) return;
+    }
+    state.products = state.products.map(p => p.id === id ? restoredProduct : p);
     saveState(); render(); toast('Produit réintégré');
   },
   setProductSubPage(id, type) {
@@ -3821,17 +4077,16 @@ const actions = {
     const draft = cacheCurrentMonthEndDraft();
     const products = state.products.filter(product => product.active !== false);
     products.forEach(product => {
-      const raw = draft[product.id]?.order;
-      if (raw !== undefined) product.monthEndOrder = Number(raw || 0) || '';
+      if (!draft[product.id]) draft[product.id] = {};
+      draft[product.id].order = productSequenceValue(product) || displayProductSequence(product);
     });
-    const refreshedDraft = monthEndDraftValues[monthEndDraftKey(month)] || {};
-    const duplicates = getMonthEndDuplicateOrders(products, refreshedDraft);
-    saveState();
+    monthEndDraftValues[monthEndDraftKey(month)] = draft;
+    const duplicates = getMonthEndDuplicateOrders(products, draft);
     render();
     if (duplicates.length) {
       alert('Attention : deux produits ou plus ont le même numéro de tri.\n\n' + duplicateMonthEndMessage(duplicates));
     } else {
-      toast('Ordre fin de mois rafraîchi');
+      toast('Séquences produits rechargées');
     }
   },
   saveMonthEndInventory() {
@@ -3841,9 +4096,24 @@ const actions = {
     const previous = getMonthEndSession(month);
     const previousLines = new Map((previous?.lines || []).map(line => [line.productId, line]));
     const products = state.products.filter(p => p.active !== false);
+    const invalidSequences = products.filter(product => {
+      const raw = draft[product.id]?.order;
+      const value = Number(raw || 0);
+      return raw !== undefined && (value < 1000 || value > 9999);
+    });
+    if (invalidSequences.length) {
+      toast('Le N° tri doit être un numéro à 4 chiffres');
+      render();
+      return;
+    }
     products.forEach(product => {
       const raw = draft[product.id]?.order;
-      if (raw !== undefined) product.monthEndOrder = Number(raw || 0) || '';
+      if (raw !== undefined) {
+        const sequence = Number(raw || 0) || '';
+        product.sequence = sequence;
+        product.monthEndOrder = sequence;
+        syncProductSequenceToMonthEndDrafts(product.id, sequence);
+      }
     });
     const duplicates = getMonthEndDuplicateOrders(products, monthEndDraftValues[monthEndDraftKey(month)] || {});
     if (duplicates.length) {
@@ -4786,7 +5056,7 @@ function downloadCsv(type) {
 function buildCsvDatasets() {
   return {
     inventory: state.products.map(p => ({
-      reference: p.sku, produit: p.name, zone_stockage: productCategoryLabel(p), conditionnement: p.packageSize || '', planning_inventaire: productInventorySlots(p).map(inventorySlotLabel).join(', '), ordres_inventaire: productInventorySlots(p).map(slot => `${inventorySlotLabel(slot)}=${productInventoryOrder(p, slot)}`).join(', '), unite: p.unit, stock: stockByProduct(p.id), stock_min: p.minStock, stock_max: p.maxStock,
+      reference: p.sku, produit: p.name, sequence: productSequenceValue(p), zone_stockage: productCategoryLabel(p), conditionnement: p.packageSize || '', planning_inventaire: productInventorySlots(p).map(inventorySlotLabel).join(', '), ordres_inventaire: productInventorySlots(p).map(slot => `${inventorySlotLabel(slot)}=${productInventoryOrder(p, slot)}`).join(', '), unite: p.unit, stock: stockByProduct(p.id), stock_min: p.minStock, stock_max: p.maxStock,
       zone: getZone(p.storageZoneId)?.name || '', fournisseur: getSupplier(p.supplierId)?.name || '', prix_dernier_achat: p.lastPrice || 0, actif: p.active !== false ? 'oui' : 'non', archive_le: p.archivedAt || ''
     })),
     lowStock: state.products.filter(p => stockByProduct(p.id) <= Number(p.minStock || 0)).map(p => ({ produit: p.name, stock: stockByProduct(p.id), stock_min: p.minStock, zone: getZone(p.storageZoneId)?.name || '' })),

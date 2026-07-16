@@ -9,7 +9,7 @@ Cette version est prévue pour être publiée sur GitHub Pages et synchronisée 
 - Réceptions avec numérisation des bons de livraison et ticket température
 - Commandes avec numérisation des bons de commande
 - Fin de mois avec export CSV/PDF
-- Produits actifs et archivés
+- Produits actifs et archivés avec colonne Séquence liée au N° de tri Fin de mois
 - Zones de stockage avec plan de séquençage intégré
 - Fournisseurs
 - Paramètres avec changement de logo

@@ -753,3 +753,4 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
 }
 .delivery-timing-box strong { margin-right: 6px; }
 .delivery-timing-box .checkbox-line { margin: 0; }
+.sequence-input { width: 92px; min-width: 92px; font-weight: 700; text-align: center; }
