@@ -194,3 +194,11 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Ajout de l’export PDF pour les inventaires.
 - Ajout des cases Inventaire AVANT livraison / Inventaire APRÈS livraison.
 - Le moment de l’inventaire est enregistré et visible dans l’historique/export.
+
+## Version v1.43
+
+- La catégorie produit est maintenant une liste fixe : HUB, Négatif, Positif, Sec.
+- Dans Produits, la catégorie, la séquence et la zone principale sont modifiables directement dans la ligne.
+- Le bouton Sauvegarder apparaît uniquement sur la ligne modifiée.
+- La modification de séquence reste synchronisée avec Fin de mois et conserve l’alerte de doublon validable.
+- Cache GitHub Pages mis à jour en v1.43.

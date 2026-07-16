@@ -754,3 +754,23 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
 .delivery-timing-box strong { margin-right: 6px; }
 .delivery-timing-box .checkbox-line { margin: 0; }
 .sequence-input { width: 92px; min-width: 92px; font-weight: 700; text-align: center; }
+
+.inline-product-select, .inline-zone-select {
+  min-width: 150px;
+  max-width: 210px;
+}
+.inline-zone-select {
+  min-width: 190px;
+}
+.inline-save.hidden-inline {
+  display: none;
+}
+.inline-dirty-row {
+  background: rgba(245, 158, 11, 0.08);
+}
+@media (max-width: 900px) {
+  .inline-product-select, .inline-zone-select {
+    min-width: 170px;
+    width: 100%;
+  }
+}

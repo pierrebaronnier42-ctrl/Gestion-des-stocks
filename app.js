@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.42.0-product-sequence-month-end';
+const APP_VERSION = '1.43.0-fixed-category-inline-products';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -21,6 +21,14 @@ const INVENTORY_TYPES = [
   { id: 'ultra', label: 'Ultra frais', short: 'Ultra frais' },
   { id: 'hub', label: 'HUB', short: 'HUB' }
 ];
+
+const PRODUCT_CATEGORY_OPTIONS = [
+  { id: 'hub', label: 'HUB' },
+  { id: 'negative', label: 'Négatif' },
+  { id: 'positive', label: 'Positif' },
+  { id: 'dry', label: 'Sec' }
+];
+const PRODUCT_CATEGORY_LABELS = PRODUCT_CATEGORY_OPTIONS.map(option => option.label);
 
 const RECEIPT_DOCUMENT_TYPES = [
   { id: 'delivery', label: 'Bon de livraison', short: 'BL' },
@@ -226,6 +234,43 @@ function loadState() {
   }
 }
 
+
+function normalizeTextForCategory(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function categoryFromText(text = '') {
+  if (text.includes('hub')) return 'HUB';
+  if (text.includes('negatif') || text.includes('negative') || text.includes('surgel') || text.includes('congel')) return 'Négatif';
+  if (text.includes('positif') || text.includes('positive') || text.includes('frais') || text.includes('ultra') || text.includes('salade')) return 'Positif';
+  if (text.includes('sec') || text.includes('ambiant') || text.includes('reserve')) return 'Sec';
+  return '';
+}
+
+function fixedProductCategory(value = '', product = {}) {
+  const explicitText = normalizeTextForCategory(value);
+  const exact = PRODUCT_CATEGORY_LABELS.find(label => normalizeTextForCategory(label) === explicitText);
+  if (exact) return exact;
+  const explicitGuess = categoryFromText(explicitText);
+  if (explicitGuess) return explicitGuess;
+  const fallbackText = normalizeTextForCategory([product.category, product.storageLabel, product.storageZoneId, product.name].filter(Boolean).join(' '));
+  return categoryFromText(fallbackText) || 'Sec';
+}
+
+function productCategorySelectOptions(selected = '') {
+  const normalized = fixedProductCategory(selected);
+  return PRODUCT_CATEGORY_OPTIONS.map(option => `<option value="${escapeHtml(option.label)}" ${option.label === normalized ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
+}
+
+function productInlineZoneOptions(selected = '') {
+  return ['<option value="">Aucune</option>'].concat(
+    state.zones.map(zone => `<option value="${escapeHtml(zone.id)}" ${selected === zone.id ? 'selected' : ''}>${escapeHtml(zone.code || '')} · ${escapeHtml(zone.name)}</option>`)
+  ).join('');
+}
+
 function migrateProduct(product) {
   const base = { ...product };
   if (!Array.isArray(base.inventorySlots)) base.inventorySlots = [];
@@ -248,7 +293,8 @@ function migrateProduct(product) {
   }
 
   const migrated = { ...base, inventoryTypes: uniqueList(inventoryTypes) };
-  return normalizeHubProductCategory(migrated);
+  migrated.category = fixedProductCategory(migrated.category || migrated.storageLabel, migrated);
+  return migrated;
 }
 
 function stableProductId(sku) {
@@ -267,11 +313,11 @@ function isHubInventoryProduct(product = {}) {
 }
 
 function normalizeHubProductCategory(product = {}) {
-  return isHubInventoryProduct(product) ? { ...product, category: 'HUB' } : product;
+  return { ...product, category: fixedProductCategory(product.category || product.storageLabel, product) };
 }
 
 function productCategoryLabel(product = {}) {
-  return isHubInventoryProduct(product) ? 'HUB' : (product.category || product.storageLabel || '-');
+  return fixedProductCategory(product.category || product.storageLabel, product);
 }
 
 function zoneMatchesLabel(zone, label) {
@@ -495,7 +541,7 @@ function ensureInventoryCatalog(targetState) {
       existing.storageZoneId = existing.storageZoneId || zoneId;
       existing.inventorySlots = uniqueList([...(existing.inventorySlots || []), ...(item.inventorySlots || [])]).sort((a,b) => INVENTORY_SLOT_ORDER.indexOf(a) - INVENTORY_SLOT_ORDER.indexOf(b));
       existing.inventoryTypes = uniqueList([...(existing.inventoryTypes || []), ...inventoryTypesFromSlots(existing.inventorySlots)]);
-      existing.category = isHubInventoryProduct(existing) || isHubInventoryProduct(item) ? 'HUB' : (existing.category || item.storageLabel);
+      existing.category = fixedProductCategory(existing.category || item.storageLabel, existing);
       existing.inventoryOrders = { ...(item.inventoryOrders || {}), ...(existing.inventoryOrders || {}) };
       if (!Number(existing.monthEndOrder || 0)) existing.monthEndOrder = index + 1;
       if (existing.active === undefined) existing.active = true;
@@ -504,7 +550,7 @@ function ensureInventoryCatalog(targetState) {
         id: stableProductId(item.sku),
         sku: item.sku,
         name: item.name,
-        category: isHubInventoryProduct(item) ? 'HUB' : item.storageLabel,
+        category: fixedProductCategory(item.storageLabel, item),
         unit: 'colis',
         packageSize: item.packageSize,
         minStock: 0,
@@ -822,32 +868,16 @@ function bindPageEvents() {
     });
   }
 
-  document.querySelectorAll('[data-product-sequence]').forEach(input => {
-    input.addEventListener('change', event => {
-      const productId = event.currentTarget.dataset.productSequence;
-      const product = getProduct(productId);
-      if (!product) return;
-      const previous = productSequenceValue(product);
-      const next = Number(event.currentTarget.value || 0);
-      if (!next || next < 1000 || next > 9999) {
-        event.currentTarget.value = previous || displayProductSequence(product);
-        return toast('La séquence doit être un numéro à 4 chiffres');
-      }
-      const duplicates = wouldDuplicateProductSequence(productId, next);
-      if (duplicates.length) {
-        const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(duplicates) + '\n\nValider quand même ?');
-        if (!ok) {
-          event.currentTarget.value = previous || displayProductSequence(product);
-          return;
-        }
-      }
-      product.sequence = next;
-      product.monthEndOrder = next;
-      syncProductSequenceToMonthEndDrafts(product.id, next);
-      saveState();
-      render();
-      toast('Séquence produit mise à jour');
-    });
+  document.querySelectorAll('[data-product-inline-field]').forEach(input => {
+    const markDirty = event => {
+      const row = event.currentTarget.closest('tr');
+      if (!row) return;
+      row.classList.add('inline-dirty-row');
+      const saveButton = row.querySelector('[data-product-inline-save]');
+      if (saveButton) saveButton.classList.remove('hidden-inline');
+    };
+    input.addEventListener('input', markDirty);
+    input.addEventListener('change', markDirty);
   });
 
   const inventoryCountInputs = Array.from(document.querySelectorAll('[data-count]'));
@@ -1286,7 +1316,7 @@ function createProductFromImportedLine(line, slot, order) {
     id: uid(),
     sku: line.sku || '',
     name: line.name || line.raw || 'Nouveau produit',
-    category: def.type === 'hub' ? 'hub' : def.type === 'ultra' ? 'fresh' : 'general',
+    category: fixedProductCategory(def.type === 'hub' ? 'HUB' : (zoneId ? getZone(zoneId)?.name : item.zoneLabel) || 'Sec'),
     unit: 'colis',
     packageSize: '',
     minStock: 0,
@@ -1630,7 +1660,7 @@ function createProductFromInventoryPdfItem(item, slot, order, zoneId, sequence =
     id: uid(),
     sku: String(item.sku || '').trim(),
     name: String(item.name || 'Nouveau produit').trim(),
-    category: def.type === 'hub' ? 'hub' : def.type === 'ultra' ? 'fresh' : 'general',
+    category: fixedProductCategory(def.type === 'hub' ? 'HUB' : (zoneId ? getZone(zoneId)?.name : item.zoneLabel) || 'Sec'),
     unit: 'colis',
     packageSize: String(item.packageSize || '').trim(),
     minStock: 0,
@@ -3179,9 +3209,8 @@ function productMatchesSearch(product) {
 }
 
 function productCategoryOptions(products) {
-  const categories = uniqueList(products.map(productCategoryLabel).filter(label => label && label !== '-')).sort((a, b) => a.localeCompare(b, 'fr', { sensitivity: 'base' }));
   return ['<option value="all">Toutes les catégories</option>'].concat(
-    categories.map(category => `<option value="${escapeHtml(category)}" ${productCategoryFilter === category ? 'selected' : ''}>${escapeHtml(category)}</option>`)
+    PRODUCT_CATEGORY_LABELS.map(category => `<option value="${escapeHtml(category)}" ${productCategoryFilter === category ? 'selected' : ''}>${escapeHtml(category)}</option>`)
   ).join('');
 }
 
@@ -3196,19 +3225,24 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
       const duplicate = !archived && duplicateMap.has(p.id);
       const sequence = displayProductSequence(p);
       return `
-        <tr class="${archived ? 'archived-row' : ''} ${duplicate ? 'duplicate-row' : ''}">
+        <tr data-product-row="${escapeHtml(p.id)}" class="${archived ? 'archived-row' : ''} ${duplicate ? 'duplicate-row' : ''}">
           <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')}</span></td>
           <td>
-            <input class="mini-input sequence-input ${duplicate ? 'duplicate-input' : ''}" data-product-sequence="${escapeHtml(p.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(sequence)}" ${archived ? 'disabled' : ''} />
+            <input class="mini-input sequence-input ${duplicate ? 'duplicate-input' : ''}" data-product-inline-field="sequence" data-product-inline-sequence="${escapeHtml(p.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(sequence)}" ${archived ? 'disabled' : ''} />
             ${duplicate ? '<br><span class="badge warning">Doublon validable</span>' : ''}
           </td>
-          <td>${escapeHtml(productCategoryLabel(p))}</td>
+          <td>
+            <select class="mini-select inline-product-select" data-product-inline-field="category" data-product-inline-category="${escapeHtml(p.id)}" ${archived ? 'disabled' : ''}>${productCategorySelectOptions(productCategoryLabel(p))}</select>
+          </td>
           <td>${inventorySlotBadges(p) || '<span class="muted">Non affecté</span>'}</td>
           <td>${number(stockByProduct(p.id))} ${escapeHtml(p.unit || '')}<br><span class="muted">${escapeHtml(p.packageSize || '')}</span></td>
           <td>${number(p.minStock || 0)} / ${number(p.maxStock || 0)}</td>
-          <td>${escapeHtml(getZone(p.storageZoneId)?.name || '-')}</td>
+          <td>
+            <select class="mini-select inline-zone-select" data-product-inline-field="zone" data-product-inline-zone="${escapeHtml(p.id)}" ${archived ? 'disabled' : ''}>${productInlineZoneOptions(p.storageZoneId || '')}</select>
+          </td>
           <td>${archived ? '<span class="badge danger">Archivé</span>' : stockBadge(p)}</td>
           <td class="actions">
+            <button class="small success inline-save hidden-inline" data-action="saveProductInline" data-id="${p.id}" data-product-inline-save="${escapeHtml(p.id)}">Sauvegarder</button>
             <button class="small secondary" data-action="openProduct" data-id="${p.id}">Modifier</button>
             ${archived
               ? `<button class="small success" data-action="restoreProduct" data-id="${p.id}">Réintégrer</button><button class="small danger-soft" data-action="deleteProduct" data-id="${p.id}">Supprimer</button>`
@@ -3894,12 +3928,12 @@ const actions = {
   openProduct(id) {
     const p = id ? getProduct(id) : {};
     const supplierOptions = ['<option value="">Aucun</option>'].concat(state.suppliers.map(s => `<option value="${s.id}" ${p.supplierId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)).join('');
-    const zoneOptions = ['<option value="">Aucune</option>'].concat(state.zones.map(z => `<option value="${z.id}" ${p.storageZoneId === z.id ? 'selected' : ''}>${escapeHtml(z.name)}</option>`)).join('');
+    const zoneOptions = ['<option value="">Aucune</option>'].concat(state.zones.map(z => `<option value="${z.id}" ${p.storageZoneId === z.id ? 'selected' : ''}>${escapeHtml(z.code || '')} · ${escapeHtml(z.name)}</option>`)).join('');
     openModal(id ? 'Modifier le produit' : 'Ajouter un produit', formActions(`
       <div class="form-grid">
         <label>Référence / SKU<input name="sku" value="${escapeHtml(p.sku || '')}" placeholder="Ex: FRIT-10KG" /></label>
         <label>Nom produit<input name="name" required value="${escapeHtml(p.name || '')}" placeholder="Ex: Frites 10 kg" /></label>
-        <label>Catégorie<input name="category" value="${escapeHtml(productCategoryLabel(p) === '-' ? '' : productCategoryLabel(p))}" placeholder="Frais, sec, surgelé, HUB..." /></label>
+        <label>Catégorie<select name="category">${productCategorySelectOptions(productCategoryLabel(p))}</select></label>
         <label>Unité de comptage<input name="unit" value="${escapeHtml(p.unit || 'colis')}" placeholder="colis, carton, kg, bidon..." /></label>
         <label>Conditionnement<input name="packageSize" value="${escapeHtml(p.packageSize || '')}" placeholder="Ex: 300 CT" /></label>
         <label>Séquence / N° tri<input name="sequence" type="number" min="1000" max="9999" step="1" value="${escapeHtml(id ? displayProductSequence(p) : '')}" placeholder="Ex: 1001" /></label>
@@ -3921,7 +3955,7 @@ const actions = {
         id: p.id || uid(),
         sku: data.sku.trim(),
         name: data.name.trim(),
-        category: selectedSlots.includes('wednesday_hub') ? 'HUB' : data.category.trim(),
+        category: fixedProductCategory(data.category, { ...p, storageZoneId: data.storageZoneId }),
         unit: data.unit.trim(),
         packageSize: data.packageSize.trim(),
         minStock: Number(data.minStock || 0),
@@ -3958,6 +3992,37 @@ const actions = {
       syncProductSequenceToMonthEndDrafts(finalItem.id, finalItem.sequence);
       saveState(); closeModal(); render(); toast('Produit enregistré');
     });
+  },
+
+  saveProductInline(id) {
+    const product = getProduct(id);
+    if (!product) return;
+    const row = Array.from(document.querySelectorAll('[data-product-row]')).find(item => item.dataset.productRow === id);
+    if (!row) return;
+    const sequenceInput = row.querySelector('[data-product-inline-sequence]');
+    const categorySelect = row.querySelector('[data-product-inline-category]');
+    const zoneSelect = row.querySelector('[data-product-inline-zone]');
+    const nextSequence = Number(sequenceInput?.value || 0);
+    const nextZoneId = zoneSelect?.value || '';
+    const nextCategory = fixedProductCategory(categorySelect?.value || product.category, { ...product, storageZoneId: nextZoneId });
+    if (!nextSequence || nextSequence < 1000 || nextSequence > 9999) {
+      if (sequenceInput) sequenceInput.value = displayProductSequence(product);
+      return toast('La séquence doit être un numéro à 4 chiffres');
+    }
+    const updatedProduct = { ...product, sequence: nextSequence, monthEndOrder: nextSequence, category: nextCategory, storageZoneId: nextZoneId };
+    const activeProducts = state.products
+      .filter(item => item.active !== false || item.id === id)
+      .map(item => item.id === id ? updatedProduct : item);
+    const duplicates = getProductSequenceDuplicates(activeProducts).filter(group => group.items.some(item => item.id === id));
+    if (duplicates.length) {
+      const ok = confirm('Attention : deux produits ou plus ont le même numéro de séquence.\n\n' + duplicateProductSequenceMessage(duplicates) + '\n\nValider quand même ?');
+      if (!ok) return;
+    }
+    state.products = state.products.map(item => item.id === id ? updatedProduct : item);
+    syncProductSequenceToMonthEndDrafts(updatedProduct.id, updatedProduct.sequence);
+    saveState();
+    render();
+    toast('Ligne produit sauvegardée');
   },
   archiveProduct(id) {
     const product = getProduct(id);
