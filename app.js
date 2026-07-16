@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.28.0-multipage-scans';
+const APP_VERSION = '1.29.0-manual-docs-crop';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -686,7 +686,7 @@ function renderNav() {
   const nav = document.querySelector('#nav');
   nav.innerHTML = pages.map(page => `
     <button class="${page.id === currentPage ? 'active' : ''}" data-page="${page.id}">
-      <span>${page.icon}</span><span>${page.label}</span>
+      <span>${page.label}</span>
     </button>
   `).join('');
   nav.querySelectorAll('button').forEach(btn => btn.addEventListener('click', () => setPage(btn.dataset.page)));
@@ -763,9 +763,31 @@ function bindPageEvents() {
       saveScannedOrderFiles(target.date, target.type, files);
     });
   }
+  const orderImportInput = document.querySelector('#orderImportInput');
+  if (orderImportInput) {
+    orderImportInput.addEventListener('change', event => {
+      const files = Array.from(event.target.files || []);
+      const target = pendingOrderScan;
+      pendingOrderScan = null;
+      event.target.value = '';
+      if (!files.length || !target) return;
+      saveScannedOrderFiles(target.date, target.type, files);
+    });
+  }
   const receiptScanInput = document.querySelector('#receiptScanInput');
   if (receiptScanInput) {
     receiptScanInput.addEventListener('change', event => {
+      const files = Array.from(event.target.files || []);
+      const target = pendingReceiptScan;
+      pendingReceiptScan = null;
+      event.target.value = '';
+      if (!files.length || !target) return;
+      saveScannedReceiptFiles(target.date, target.type, target.docType, files);
+    });
+  }
+  const receiptImportInput = document.querySelector('#receiptImportInput');
+  if (receiptImportInput) {
+    receiptImportInput.addEventListener('change', event => {
       const files = Array.from(event.target.files || []);
       const target = pendingReceiptScan;
       pendingReceiptScan = null;
@@ -1138,6 +1160,154 @@ function persistScannedReceiptPages(date, type, docType, newPages) {
   }
 }
 
+
+function manualOrderTypeOptions(selected = 'general') {
+  return INVENTORY_TYPES.map(type => `<option value="${type.id}" ${selected === type.id ? 'selected' : ''}>${escapeHtml(type.label)}</option>`).join('');
+}
+
+function manualReceiptTypeOptions(selected = 'general') {
+  return INVENTORY_TYPES.map(type => `<option value="${type.id}" ${selected === type.id ? 'selected' : ''}>${escapeHtml(type.label)}</option>`).join('');
+}
+
+function manualReceiptDocOptions(selected = 'delivery') {
+  return RECEIPT_DOCUMENT_TYPES.map(doc => `<option value="${doc.id}" ${selected === doc.id ? 'selected' : ''}>${escapeHtml(doc.label)}</option>`).join('');
+}
+
+function getManualOrderTarget() {
+  const date = document.querySelector('#manualOrderDate')?.value || today();
+  const type = document.querySelector('#manualOrderType')?.value || 'general';
+  return { date, type };
+}
+
+function getManualReceiptTarget() {
+  const date = document.querySelector('#manualReceiptDate')?.value || today();
+  const docType = document.querySelector('#manualReceiptDocType')?.value || 'delivery';
+  const type = docType === 'temperature' ? 'delivery' : (document.querySelector('#manualReceiptType')?.value || 'general');
+  return { date, type, docType };
+}
+
+function isImageScanPage(page = {}) {
+  return String(page.fileType || '').startsWith('image/') && String(page.fileData || '').startsWith('data:image/');
+}
+
+function replaceOrderScanPage(scanId, pageId, nextPage) {
+  const scan = (state.scannedOrders || []).find(item => item.id === scanId);
+  if (!scan) return false;
+  scan.pages = scanPages(scan).map(page => page.id === pageId ? { ...page, ...nextPage, id: page.id, fileName: nextPage.fileName || page.fileName, scannedAt: page.scannedAt, editedAt: new Date().toISOString() } : page);
+  saveState();
+  render();
+  return true;
+}
+
+function replaceReceiptScanPage(scanId, pageId, nextPage) {
+  const scan = (state.scannedReceipts || []).find(item => item.id === scanId);
+  if (!scan) return false;
+  scan.pages = scanPages(scan).map(page => page.id === pageId ? { ...page, ...nextPage, id: page.id, fileName: nextPage.fileName || page.fileName, scannedAt: page.scannedAt, editedAt: new Date().toISOString() } : page);
+  saveState();
+  render();
+  return true;
+}
+
+function cropImageDataUrl(dataUrl, crop = {}) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const leftPct = Math.max(0, Math.min(45, Number(crop.left || 0))) / 100;
+        const topPct = Math.max(0, Math.min(45, Number(crop.top || 0))) / 100;
+        const rightPct = Math.max(0, Math.min(45, Number(crop.right || 0))) / 100;
+        const bottomPct = Math.max(0, Math.min(45, Number(crop.bottom || 0))) / 100;
+        const sx = Math.round(img.width * leftPct);
+        const sy = Math.round(img.height * topPct);
+        const sw = Math.max(1, Math.round(img.width * (1 - leftPct - rightPct)));
+        const sh = Math.max(1, Math.round(img.height * (1 - topPct - bottomPct)));
+        const canvas = document.createElement('canvas');
+        const maxSide = 1400;
+        const ratio = Math.min(1, maxSide / Math.max(sw, sh));
+        canvas.width = Math.max(1, Math.round(sw * ratio));
+        canvas.height = Math.max(1, Math.round(sh * ratio));
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.78));
+      } catch (error) {
+        reject(error);
+      }
+    };
+    img.onerror = () => reject(new Error('Image illisible'));
+    img.src = dataUrl;
+  });
+}
+
+function autoCropImageDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const work = document.createElement('canvas');
+        const maxSample = 900;
+        const ratio = Math.min(1, maxSample / Math.max(img.width, img.height));
+        work.width = Math.max(1, Math.round(img.width * ratio));
+        work.height = Math.max(1, Math.round(img.height * ratio));
+        const ctx = work.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, work.width, work.height);
+        const image = ctx.getImageData(0, 0, work.width, work.height);
+        const data = image.data;
+        const corner = (x, y) => {
+          const i = (y * work.width + x) * 4;
+          return [data[i], data[i + 1], data[i + 2]];
+        };
+        const corners = [corner(0,0), corner(work.width-1,0), corner(0,work.height-1), corner(work.width-1,work.height-1)];
+        const bg = corners.reduce((acc, rgb) => [acc[0]+rgb[0], acc[1]+rgb[1], acc[2]+rgb[2]], [0,0,0]).map(v => v / corners.length);
+        let minX = work.width, minY = work.height, maxX = 0, maxY = 0;
+        const threshold = 34;
+        for (let y = 0; y < work.height; y += 2) {
+          for (let x = 0; x < work.width; x += 2) {
+            const i = (y * work.width + x) * 4;
+            const diff = Math.abs(data[i] - bg[0]) + Math.abs(data[i + 1] - bg[1]) + Math.abs(data[i + 2] - bg[2]);
+            if (diff > threshold) {
+              if (x < minX) minX = x;
+              if (y < minY) minY = y;
+              if (x > maxX) maxX = x;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (minX >= maxX || minY >= maxY) return resolve(dataUrl);
+        const padX = Math.round(work.width * 0.025);
+        const padY = Math.round(work.height * 0.025);
+        minX = Math.max(0, minX - padX);
+        minY = Math.max(0, minY - padY);
+        maxX = Math.min(work.width, maxX + padX);
+        maxY = Math.min(work.height, maxY + padY);
+        const crop = {
+          left: (minX / work.width) * 100,
+          top: (minY / work.height) * 100,
+          right: ((work.width - maxX) / work.width) * 100,
+          bottom: ((work.height - maxY) / work.height) * 100
+        };
+        cropImageDataUrl(dataUrl, crop).then(resolve).catch(reject);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    img.onerror = () => reject(new Error('Image illisible'));
+    img.src = dataUrl;
+  });
+}
+
+function cropModalHtml(page) {
+  return formActions(`
+    <p class="muted">Indique le pourcentage à retirer sur chaque bord. Exemple : 5 = retirer 5% du bord.</p>
+    <div class="form-grid">
+      <label>Haut (%)<input id="cropTop" type="number" min="0" max="45" step="1" value="0" /></label>
+      <label>Bas (%)<input id="cropBottom" type="number" min="0" max="45" step="1" value="0" /></label>
+      <label>Gauche (%)<input id="cropLeft" type="number" min="0" max="45" step="1" value="0" /></label>
+      <label>Droite (%)<input id="cropRight" type="number" min="0" max="45" step="1" value="0" /></label>
+    </div>
+    <div class="scan-crop-preview"><img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Aperçu de la page à rogner" /></div>
+  `);
+}
+
 function inventoryTypeChecks(product = {}) {
   const selected = productInventoryTypes(product);
   return INVENTORY_TYPES.map(type => `
@@ -1482,7 +1652,8 @@ function renderOrders() {
       return `
         <div class="order-scan-slot">
           <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) ✓` : ''}</span>
-          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Ajouter des pages' : 'Numériser'}</button>
+          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Ajouter photo' : 'Numériser'}</button>
+          <button type="button" class="small secondary" data-action="triggerOrderImport" data-id="${row.date}" data-type="${type}">Importer plusieurs pages</button>
           ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button>` : ''}
         </div>
       `;
@@ -1508,7 +1679,8 @@ function renderOrders() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
-          <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Ajouter des pages</button>
+          <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Ajouter photo</button>
+          <button class="small secondary" data-action="triggerOrderImport" data-id="${scan.date}" data-type="${scan.type}">Importer pages</button>
           <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer le document</button>
         </td>
       </tr>
@@ -1536,9 +1708,26 @@ function renderOrders() {
   }).join('') || `<tr><td colspan="7" class="empty">Aucune commande enregistrée.</td></tr>`;
 
   return `
-    <input id="orderScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" multiple />
+    <input id="orderScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
+    <input id="orderImportInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" multiple />
 
     <div class="card">
+      <div class="toolbar">
+        <div>
+          <p class="eyebrow">Ajout manuel</p>
+          <h3>Ajouter un bon de commande manquant</h3>
+          <p class="muted">Utilise cette zone pour ajouter un BC d’une date passée ou d’un jour qui n’apparaît plus dans le prévisionnel.</p>
+        </div>
+      </div>
+      <div class="form-grid compact-grid">
+        <label>Date de commande<input id="manualOrderDate" type="date" value="${today()}" /></label>
+        <label>Type de commande<select id="manualOrderType">${manualOrderTypeOptions()}</select></label>
+        <label>Photo appareil<button type="button" class="secondary full" data-action="triggerManualOrderScan">Numériser / ajouter photo</button></label>
+        <label>Plusieurs pages<button type="button" class="secondary full" data-action="triggerManualOrderImport">Importer plusieurs pages</button></label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
       <div class="toolbar">
         <div>
           <p class="eyebrow">Prévisionnel</p>
@@ -1553,7 +1742,7 @@ function renderOrders() {
       <div class="toolbar">
         <div>
           <h3>Bons de commande numérisés</h3>
-          <p class="muted">Un même bon peut contenir autant de pages que nécessaire. Sur téléphone, photographie les pages une par une en appuyant plusieurs fois sur « Ajouter des pages ». Depuis la galerie ou un ordinateur, tu peux aussi sélectionner plusieurs fichiers en une seule fois.</p>
+          <p class="muted">Un même bon peut contenir autant de pages que nécessaire. Tu peux ajouter une page avec l’appareil photo ou importer toutes les pages d’un coup depuis la galerie, un scanner mobile ou un PDF.</p>
         </div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Pages</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
@@ -1618,7 +1807,8 @@ function renderReceipts() {
           <span class="badge info">${escapeHtml(receiptTypeLabel(type))}</span>
           <span class="receipt-doc-actions">
             <span class="badge ${deliveryScan ? 'success' : 'warning'}">BL${deliveryScan ? ` · ${scanPageCount(deliveryScan)} page(s) ✓` : ''}</span>
-            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Ajouter des pages BL' : 'Numériser BL'}</button>
+            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Ajouter photo BL' : 'Numériser BL'}</button>
+            <button type="button" class="small secondary" data-action="triggerReceiptImport" data-id="${row.date}" data-type="${type}" data-doc="delivery">Importer pages BL</button>
             ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir les ${scanPageCount(deliveryScan)} page(s)</button>` : ''}
           </span>
         </div>
@@ -1630,6 +1820,7 @@ function renderReceipts() {
         <span class="receipt-doc-actions">
           <span class="badge ${temperatureScan ? 'success' : 'warning'}">Ticket température${temperatureScan ? ' ✓' : ''}</span>
           <button type="button" class="small ${temperatureScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="delivery" data-doc="temperature">${temperatureScan ? 'Remplacer ticket température' : 'Numériser ticket température'}</button>
+          <button type="button" class="small secondary" data-action="triggerReceiptImport" data-id="${row.date}" data-type="delivery" data-doc="temperature">Importer ticket</button>
           ${temperatureScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${temperatureScan.id}">Voir ticket</button>` : ''}
         </span>
       </div>
@@ -1664,7 +1855,8 @@ function renderReceipts() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
-          <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Ajouter des pages'}</button>
+          <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Ajouter photo'}</button>
+          <button class="small secondary" data-action="triggerReceiptImport" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Importer ticket' : 'Importer pages'}</button>
           <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer le document</button>
         </td>
       </tr>
@@ -1683,9 +1875,27 @@ function renderReceipts() {
   `).join('') || `<tr><td colspan="6" class="empty">Aucune réception enregistrée.</td></tr>`;
 
   return `
-    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" multiple />
+    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
+    <input id="receiptImportInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" multiple />
 
     <div class="card">
+      <div class="toolbar">
+        <div>
+          <p class="eyebrow">Ajout manuel</p>
+          <h3>Ajouter un document de livraison manquant</h3>
+          <p class="muted">Utilise cette zone pour ajouter un BL ou un ticket température d’une livraison passée.</p>
+        </div>
+      </div>
+      <div class="form-grid compact-grid">
+        <label>Date de livraison<input id="manualReceiptDate" type="date" value="${today()}" /></label>
+        <label>Document<select id="manualReceiptDocType">${manualReceiptDocOptions()}</select></label>
+        <label>Type BL<select id="manualReceiptType">${manualReceiptTypeOptions()}</select></label>
+        <label>Photo appareil<button type="button" class="secondary full" data-action="triggerManualReceiptScan">Numériser / ajouter photo</button></label>
+        <label>Plusieurs pages<button type="button" class="secondary full" data-action="triggerManualReceiptImport">Importer plusieurs pages</button></label>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
       <div class="toolbar">
         <div>
           <p class="eyebrow">Prévisionnel</p>
@@ -1700,7 +1910,7 @@ function renderReceipts() {
       <div class="toolbar">
         <div>
           <h3>Documents de livraison numérisés</h3>
-          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Sur téléphone, photographie les pages une par une en utilisant « Ajouter des pages ». Depuis la galerie ou un ordinateur, plusieurs fichiers peuvent être sélectionnés en une seule fois. Le ticket température reste unique par livraison.</p>
+          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Tu peux ajouter une page avec l’appareil photo ou importer toutes les pages d’un coup depuis la galerie, un scanner mobile ou un PDF. Le ticket température reste unique par livraison.</p>
         </div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Document</th><th>Fichier</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
@@ -2298,6 +2508,21 @@ const actions = {
     if (!input) return toast('Impossible d’ouvrir la numérisation');
     input.click();
   },
+  triggerOrderImport(date, type) {
+    if (!date || !type) return toast('Choisis une date et un type de commande');
+    pendingOrderScan = { date, type };
+    const input = document.querySelector('#orderImportInput');
+    if (!input) return toast('Impossible d’ouvrir l’import de pages');
+    input.click();
+  },
+  triggerManualOrderScan() {
+    const target = getManualOrderTarget();
+    return actions.triggerOrderScan(target.date, target.type);
+  },
+  triggerManualOrderImport() {
+    const target = getManualOrderTarget();
+    return actions.triggerOrderImport(target.date, target.type);
+  },
   viewScannedOrder(id) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
     if (!scan) return toast('Bon de commande introuvable');
@@ -2313,6 +2538,7 @@ const actions = {
           ${preview}
           <div class="form-actions scan-page-actions">
             <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger cette page</a>
+            ${isImage ? `<button type="button" class="small secondary" data-action="autoCropOrderPage" data-id="${scan.id}" data-type="${page.id}">Rogner auto</button><button type="button" class="small secondary" data-action="openOrderPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
             <button type="button" class="small danger-soft" data-action="deleteScannedOrderPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
           </div>
         </section>
@@ -2325,6 +2551,42 @@ const actions = {
         <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  async autoCropOrderPage(id, pageId) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    const page = scanPages(scan || {}).find(item => item.id === pageId);
+    if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
+    toast('Rognage automatique en cours…');
+    try {
+      const fileData = await autoCropImageDataUrl(page.fileData);
+      replaceOrderScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
+      closeModal();
+      toast('Page rognée automatiquement');
+    } catch (error) {
+      console.error(error);
+      toast('Rognage automatique impossible pour cette page');
+    }
+  },
+  openOrderPageCrop(id, pageId) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    const page = scanPages(scan || {}).find(item => item.id === pageId);
+    if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
+    openModal('Rogner la page du bon de commande', cropModalHtml(page), async () => {
+      try {
+        const fileData = await cropImageDataUrl(page.fileData, {
+          top: document.querySelector('#cropTop')?.value || 0,
+          bottom: document.querySelector('#cropBottom')?.value || 0,
+          left: document.querySelector('#cropLeft')?.value || 0,
+          right: document.querySelector('#cropRight')?.value || 0
+        });
+        replaceOrderScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
+        closeModal();
+        toast('Page rognée');
+      } catch (error) {
+        console.error(error);
+        toast('Impossible de rogner cette page');
+      }
+    });
   },
   deleteScannedOrderPage(id, pageId) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
@@ -2349,6 +2611,23 @@ const actions = {
     if (!input) return toast('Impossible d’ouvrir la numérisation');
     input.click();
   },
+  triggerReceiptImport(date, type, docType = 'delivery') {
+    const effectiveDocType = docType || 'delivery';
+    const effectiveType = receiptScanScopeType(type || 'delivery', effectiveDocType);
+    if (!date || (!effectiveType && effectiveDocType !== 'temperature')) return toast('Choisis une date et un type de livraison');
+    pendingReceiptScan = { date, type: effectiveType, docType: effectiveDocType };
+    const input = document.querySelector('#receiptImportInput');
+    if (!input) return toast('Impossible d’ouvrir l’import de pages');
+    input.click();
+  },
+  triggerManualReceiptScan() {
+    const target = getManualReceiptTarget();
+    return actions.triggerReceiptScan(target.date, target.type, target.docType);
+  },
+  triggerManualReceiptImport() {
+    const target = getManualReceiptTarget();
+    return actions.triggerReceiptImport(target.date, target.type, target.docType);
+  },
   viewScannedReceipt(id) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);
     if (!scan) return toast('Document de livraison introuvable');
@@ -2365,6 +2644,7 @@ const actions = {
           ${preview}
           <div class="form-actions scan-page-actions">
             <a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger cette page</a>
+            ${isImage ? `<button type="button" class="small secondary" data-action="autoCropReceiptPage" data-id="${scan.id}" data-type="${page.id}">Rogner auto</button><button type="button" class="small secondary" data-action="openReceiptPageCrop" data-id="${scan.id}" data-type="${page.id}">Rogner manuel</button>` : ''}
             <button type="button" class="small danger-soft" data-action="deleteScannedReceiptPage" data-id="${scan.id}" data-type="${page.id}">Supprimer cette page</button>
           </div>
         </section>
@@ -2377,6 +2657,42 @@ const actions = {
         <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  async autoCropReceiptPage(id, pageId) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    const page = scanPages(scan || {}).find(item => item.id === pageId);
+    if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
+    toast('Rognage automatique en cours…');
+    try {
+      const fileData = await autoCropImageDataUrl(page.fileData);
+      replaceReceiptScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
+      closeModal();
+      toast('Page rognée automatiquement');
+    } catch (error) {
+      console.error(error);
+      toast('Rognage automatique impossible pour cette page');
+    }
+  },
+  openReceiptPageCrop(id, pageId) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    const page = scanPages(scan || {}).find(item => item.id === pageId);
+    if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
+    openModal('Rogner la page du document', cropModalHtml(page), async () => {
+      try {
+        const fileData = await cropImageDataUrl(page.fileData, {
+          top: document.querySelector('#cropTop')?.value || 0,
+          bottom: document.querySelector('#cropBottom')?.value || 0,
+          left: document.querySelector('#cropLeft')?.value || 0,
+          right: document.querySelector('#cropRight')?.value || 0
+        });
+        replaceReceiptScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
+        closeModal();
+        toast('Page rognée');
+      } catch (error) {
+        console.error(error);
+        toast('Impossible de rogner cette page');
+      }
+    });
   },
   deleteScannedReceiptPage(id, pageId) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);

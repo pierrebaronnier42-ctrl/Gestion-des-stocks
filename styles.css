@@ -515,3 +515,8 @@ button:disabled, .file-label:disabled {
   .scan-page-actions .download-link,
   .scan-page-actions button { width: 100%; }
 }
+
+/* v1.29 - ajout manuel de documents et rognage */
+.scan-crop-preview { margin-top: 14px; max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: #f8fafc; padding: 12px; }
+.order-scan-slot .small, .receipt-scan-slot .small { margin-top: 6px; }
+.nav button span:first-child:last-child { width: auto; }

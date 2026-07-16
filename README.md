@@ -113,3 +113,12 @@ Si tu vois encore l'ancien texte “Les données sont stockées dans le navigate
 - Depuis la galerie ou un ordinateur, plusieurs fichiers peuvent être sélectionnés en une seule fois.
 - Chaque document affiche son nombre de pages et permet de supprimer une page individuellement.
 - Le ticket température reste unique par livraison.
+
+## Version 1.29 — ajout manuel et rognage
+
+- Ajout manuel d’un bon de commande manquant à une date passée.
+- Ajout manuel d’un BL ou ticket température manquant à une date passée.
+- Bouton d’import multi-pages pour sélectionner plusieurs photos/fichiers en une seule fois.
+- Conservation du bouton appareil photo pour ajouter une page rapidement.
+- Ajout du rognage automatique et du rognage manuel sur les pages image.
+- Suppression des icônes du menu de navigation.
