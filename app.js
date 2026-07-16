@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.32.0-manual-crop-selection';
+const APP_VERSION = '1.33.0-missing-receipt-docs';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -2296,26 +2296,26 @@ function renderReceipts() {
     </tr>
   `).join('') || `<tr><td colspan="6" class="empty">Aucune réception enregistrée.</td></tr>`;
 
-  return `
-    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
-    <input id="receiptImportInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" multiple />
-
-    <div class="card">
-      <div class="toolbar">
-        <div>
-          <p class="eyebrow">Ajout manuel</p>
-          <h3>Ajouter un document de livraison manquant</h3>
-          <p class="muted">Utilise cette zone pour ajouter un BL ou un ticket température d’une livraison passée.</p>
-        </div>
+  const missingReceiptDocPanel = `
+    <div class="missing-doc-panel">
+      <div>
+        <h4>Ajouter un document manquant à une date</h4>
+        <p class="muted">Utilise cette zone pour compléter une livraison passée : BL Général, BL Ultra frais, BL HUB ou ticket température.</p>
       </div>
       <div class="form-grid compact-grid">
         <label>Date de livraison<input id="manualReceiptDate" type="date" value="${today()}" /></label>
         <label>Document<select id="manualReceiptDocType">${manualReceiptDocOptions()}</select></label>
         <label>Type BL<select id="manualReceiptType">${manualReceiptTypeOptions()}</select></label>
         <label>Appareil photo<button type="button" class="secondary full" data-action="triggerManualReceiptScan">Scanner plusieurs photos</button></label>
-        <label>Plusieurs pages<button type="button" class="secondary full" data-action="triggerManualReceiptImport">Importer plusieurs pages</button></label>
+        <label>Fichier / galerie<button type="button" class="secondary full" data-action="triggerManualReceiptImport">Importer plusieurs pages</button></label>
       </div>
+      <p class="muted">Pour le ticket température, le type BL est ignoré : le ticket reste unique pour la date choisie.</p>
     </div>
+  `;
+
+  return `
+    <input id="receiptScanInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" capture="environment" />
+    <input id="receiptImportInput" class="hidden-scan-input" type="file" accept="image/*,application/pdf" multiple />
 
     <div class="card" style="margin-top:18px;">
       <div class="toolbar">
@@ -2332,9 +2332,10 @@ function renderReceipts() {
       <div class="toolbar">
         <div>
           <h3>Documents de livraison numérisés</h3>
-          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Tu peux ajouter une page avec l’appareil photo ou importer toutes les pages d’un coup depuis la galerie, un scanner mobile ou un PDF. Le ticket température reste unique par livraison.</p>
+          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Tu peux ajouter un document manquant à une date passée, puis scanner ou importer toutes ses pages.</p>
         </div>
       </div>
+      ${missingReceiptDocPanel}
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Document</th><th>Fichier</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
     </div>
 

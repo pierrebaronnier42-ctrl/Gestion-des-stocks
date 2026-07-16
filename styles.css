@@ -695,3 +695,18 @@ button:disabled, .file-label:disabled {
   .crop-selection-grid { grid-template-columns: 1fr; }
   .crop-selection-stage, .crop-selection-stage img, .crop-selection-grid .scan-preview { max-height: 52vh; }
 }
+
+
+.missing-doc-panel {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px;
+  margin: 12px 0 16px;
+  background: rgba(15, 23, 42, 0.03);
+}
+.missing-doc-panel h4 {
+  margin: 0 0 4px;
+}
+.missing-doc-panel .form-grid {
+  margin-top: 12px;
+}

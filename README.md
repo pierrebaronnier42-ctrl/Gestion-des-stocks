@@ -138,3 +138,10 @@ Si tu vois encore l'ancien texte “Les données sont stockées dans le navigate
 - Bouton PDF dans les tableaux et dans la vue détail des documents.
 - Rognage manuel corrigé avec aperçu du résultat avant enregistrement.
 - Rognage automatique possible sur une page ou toutes les pages d’un document.
+
+
+## Version v8
+
+- Ajout du bloc « Ajouter un document manquant à une date » directement dans « Documents de livraison numérisés ».
+- Permet d’ajouter un BL ou un ticket température sur une date passée depuis la section des documents.
+- Mise à jour du cache GitHub Pages en v1.33.
