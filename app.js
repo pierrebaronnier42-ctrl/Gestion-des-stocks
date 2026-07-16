@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.30.0-multiphoto-scanner';
+const APP_VERSION = '1.31.0-pdf-multipage-crop';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -1334,21 +1334,25 @@ function isImageScanPage(page = {}) {
   return String(page.fileType || '').startsWith('image/') && String(page.fileData || '').startsWith('data:image/');
 }
 
-function replaceOrderScanPage(scanId, pageId, nextPage) {
+function replaceOrderScanPage(scanId, pageId, nextPage, options = {}) {
   const scan = (state.scannedOrders || []).find(item => item.id === scanId);
   if (!scan) return false;
   scan.pages = scanPages(scan).map(page => page.id === pageId ? { ...page, ...nextPage, id: page.id, fileName: nextPage.fileName || page.fileName, scannedAt: page.scannedAt, editedAt: new Date().toISOString() } : page);
-  saveState();
-  render();
+  if (!options.silent) {
+    saveState();
+    render();
+  }
   return true;
 }
 
-function replaceReceiptScanPage(scanId, pageId, nextPage) {
+function replaceReceiptScanPage(scanId, pageId, nextPage, options = {}) {
   const scan = (state.scannedReceipts || []).find(item => item.id === scanId);
   if (!scan) return false;
   scan.pages = scanPages(scan).map(page => page.id === pageId ? { ...page, ...nextPage, id: page.id, fileName: nextPage.fileName || page.fileName, scannedAt: page.scannedAt, editedAt: new Date().toISOString() } : page);
-  saveState();
-  render();
+  if (!options.silent) {
+    saveState();
+    render();
+  }
   return true;
 }
 
@@ -1441,15 +1445,164 @@ function autoCropImageDataUrl(dataUrl) {
 
 function cropModalHtml(page) {
   return formActions(`
-    <p class="muted">Indique le pourcentage à retirer sur chaque bord. Exemple : 5 = retirer 5% du bord.</p>
+    <p class="muted">Indique le pourcentage à retirer sur chaque bord. Le résultat est prévisualisé à droite avant enregistrement.</p>
     <div class="form-grid">
       <label>Haut (%)<input id="cropTop" type="number" min="0" max="45" step="1" value="0" /></label>
       <label>Bas (%)<input id="cropBottom" type="number" min="0" max="45" step="1" value="0" /></label>
       <label>Gauche (%)<input id="cropLeft" type="number" min="0" max="45" step="1" value="0" /></label>
       <label>Droite (%)<input id="cropRight" type="number" min="0" max="45" step="1" value="0" /></label>
     </div>
-    <div class="scan-crop-preview"><img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Aperçu de la page à rogner" /></div>
+    <div class="scan-crop-preview-grid">
+      <div>
+        <p class="muted"><strong>Image originale</strong></p>
+        <img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Image originale" />
+      </div>
+      <div>
+        <p class="muted"><strong>Résultat après rognage</strong></p>
+        <img id="cropPreviewImage" class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Résultat du rognage" />
+      </div>
+    </div>
   `);
+}
+
+function cropValuesFromModal() {
+  return {
+    top: document.querySelector('#cropTop')?.value || 0,
+    bottom: document.querySelector('#cropBottom')?.value || 0,
+    left: document.querySelector('#cropLeft')?.value || 0,
+    right: document.querySelector('#cropRight')?.value || 0
+  };
+}
+
+function bindCropPreview(sourceDataUrl) {
+  const preview = document.querySelector('#cropPreviewImage');
+  if (!preview) return;
+  let timer = null;
+  const update = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        preview.classList.add('loading');
+        preview.src = await cropImageDataUrl(sourceDataUrl, cropValuesFromModal());
+      } catch (error) {
+        console.warn('Aperçu du rognage impossible', error);
+      } finally {
+        preview.classList.remove('loading');
+      }
+    }, 120);
+  };
+  ['#cropTop', '#cropBottom', '#cropLeft', '#cropRight'].forEach(selector => document.querySelector(selector)?.addEventListener('input', update));
+  update();
+}
+
+function getJsPdfConstructor() {
+  return window.jspdf?.jsPDF || window.jsPDF || null;
+}
+
+function imageSizeFromDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth || img.width || 1, height: img.naturalHeight || img.height || 1 });
+    img.onerror = () => reject(new Error('Image illisible pour le PDF'));
+    img.src = dataUrl;
+  });
+}
+
+function pdfImageFormat(dataUrl) {
+  if (String(dataUrl || '').startsWith('data:image/png')) return 'PNG';
+  if (String(dataUrl || '').startsWith('data:image/webp')) return 'WEBP';
+  return 'JPEG';
+}
+
+async function createMultiPagePdfBlob(scan, title = 'Document numérisé') {
+  const JsPDF = getJsPdfConstructor();
+  if (!JsPDF) throw new Error('Bibliothèque PDF non chargée');
+  const imagePages = scanPages(scan).filter(isImageScanPage);
+  if (!imagePages.length) throw new Error('Aucune page image à convertir en PDF');
+
+  let pdf = null;
+  for (let i = 0; i < imagePages.length; i += 1) {
+    const page = imagePages[i];
+    const size = await imageSizeFromDataUrl(page.fileData);
+    const orientation = size.width > size.height ? 'landscape' : 'portrait';
+    if (!pdf) pdf = new JsPDF({ orientation, unit: 'mm', format: 'a4', compress: true });
+    else pdf.addPage('a4', orientation);
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 6;
+    const maxWidth = pageWidth - margin * 2;
+    const maxHeight = pageHeight - margin * 2;
+    const ratio = Math.min(maxWidth / size.width, maxHeight / size.height);
+    const drawWidth = size.width * ratio;
+    const drawHeight = size.height * ratio;
+    const x = (pageWidth - drawWidth) / 2;
+    const y = (pageHeight - drawHeight) / 2;
+    pdf.addImage(page.fileData, pdfImageFormat(page.fileData), x, y, drawWidth, drawHeight, undefined, 'FAST');
+    pdf.setFontSize(7);
+    pdf.setTextColor(120);
+    pdf.text(`${title} — page ${i + 1}/${imagePages.length}`, margin, pageHeight - 3);
+  }
+  return pdf.output('blob');
+}
+
+function scanPdfFileName(scan, kind = 'document') {
+  const safeDate = scan.date || today();
+  if (kind === 'order') return `bon-commande-${safeDate}-${scan.type || 'general'}.pdf`;
+  if (kind === 'receipt') {
+    if (scan.docType === 'temperature') return `ticket-temperature-${safeDate}.pdf`;
+    return `bon-livraison-${safeDate}-${scan.type || 'general'}.pdf`;
+  }
+  return `document-${safeDate}.pdf`;
+}
+
+function downloadDataUrl(dataUrl, filename) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function downloadScanAsPdf(scan, kind, title) {
+  if (!scan) return toast('Document introuvable');
+  const pages = scanPages(scan);
+  const imagePages = pages.filter(isImageScanPage);
+  const existingPdf = pages.find(page => String(page.fileType || '').includes('pdf') && String(page.fileData || '').startsWith('data:application/pdf'));
+  if (!imagePages.length && existingPdf) {
+    downloadDataUrl(existingPdf.fileData, scanPdfFileName(scan, kind));
+    return;
+  }
+  if (!imagePages.length) return toast('Aucune page image disponible pour créer le PDF');
+  try {
+    toast('Création du PDF multipage…');
+    const blob = await createMultiPagePdfBlob(scan, title);
+    downloadBlob(blob, scanPdfFileName(scan, kind));
+    toast('PDF multipage généré');
+  } catch (error) {
+    console.error(error);
+    toast('Impossible de créer le PDF multipage. Recharge la page puis réessaie.');
+  }
+}
+
+async function autoCropScanPages(scan, replacePage, label = 'document') {
+  const pages = scanPages(scan);
+  const imagePages = pages.filter(isImageScanPage);
+  if (!imagePages.length) return toast('Aucune page image à rogner');
+  toast(`Rognage automatique de ${imagePages.length} page(s)…`);
+  for (const page of imagePages) {
+    try {
+      const fileData = await autoCropImageDataUrl(page.fileData);
+      replacePage(scan.id, page.id, { fileData, fileType: 'image/jpeg' }, { silent: true });
+    } catch (error) {
+      console.warn('Rognage automatique ignoré pour une page', error);
+    }
+  }
+  saveState();
+  closeModal();
+  render();
+  toast(`${label} rogné automatiquement`);
 }
 
 function inventoryTypeChecks(product = {}) {
@@ -1798,7 +1951,7 @@ function renderOrders() {
           <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) ✓` : ''}</span>
           <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Scanner pages' : 'Scanner pages'}</button>
           <button type="button" class="small secondary" data-action="triggerOrderImport" data-id="${row.date}" data-type="${type}">Importer plusieurs pages</button>
-          ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button>` : ''}
+          ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button><button type="button" class="small success" data-action="downloadScannedOrderPdf" data-id="${scan.id}">PDF</button>` : ''}
         </div>
       `;
     }).join('');
@@ -1823,6 +1976,7 @@ function renderOrders() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
+          <button class="small success" data-action="downloadScannedOrderPdf" data-id="${scan.id}">PDF</button>
           <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Scanner pages</button>
           <button class="small secondary" data-action="triggerOrderImport" data-id="${scan.date}" data-type="${scan.type}">Importer pages</button>
           <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer le document</button>
@@ -1953,7 +2107,7 @@ function renderReceipts() {
             <span class="badge ${deliveryScan ? 'success' : 'warning'}">BL${deliveryScan ? ` · ${scanPageCount(deliveryScan)} page(s) ✓` : ''}</span>
             <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Scanner pages BL' : 'Scanner pages BL'}</button>
             <button type="button" class="small secondary" data-action="triggerReceiptImport" data-id="${row.date}" data-type="${type}" data-doc="delivery">Importer pages BL</button>
-            ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir les ${scanPageCount(deliveryScan)} page(s)</button>` : ''}
+            ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir les ${scanPageCount(deliveryScan)} page(s)</button><button type="button" class="small success" data-action="downloadScannedReceiptPdf" data-id="${deliveryScan.id}">PDF</button>` : ''}
           </span>
         </div>
       `;
@@ -1965,7 +2119,7 @@ function renderReceipts() {
           <span class="badge ${temperatureScan ? 'success' : 'warning'}">Ticket température${temperatureScan ? ' ✓' : ''}</span>
           <button type="button" class="small ${temperatureScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="delivery" data-doc="temperature">${temperatureScan ? 'Remplacer ticket température' : 'Numériser ticket température'}</button>
           <button type="button" class="small secondary" data-action="triggerReceiptImport" data-id="${row.date}" data-type="delivery" data-doc="temperature">Importer ticket</button>
-          ${temperatureScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${temperatureScan.id}">Voir ticket</button>` : ''}
+          ${temperatureScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${temperatureScan.id}">Voir ticket</button><button type="button" class="small success" data-action="downloadScannedReceiptPdf" data-id="${temperatureScan.id}">PDF</button>` : ''}
         </span>
       </div>
     `;
@@ -1999,6 +2153,7 @@ function renderReceipts() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
+          <button class="small success" data-action="downloadScannedReceiptPdf" data-id="${scan.id}">PDF</button>
           <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Scanner pages'}</button>
           <button class="small secondary" data-action="triggerReceiptImport" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Importer ticket' : 'Importer pages'}</button>
           <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer le document</button>
@@ -2688,10 +2843,24 @@ const actions = {
     openModal(`Bon de commande · ${orderTypeLabel(scan.type)}`, `
       <div class="scan-modal-content">
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(orderTypeLabel(scan.type))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
-        <div class="form-actions"><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
+        <div class="form-actions">
+          <button type="button" data-action="downloadScannedOrderPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
+          <button type="button" data-action="autoCropAllOrderPages" data-id="${scan.id}" class="secondary">Rogner auto toutes les pages</button>
+          <button type="button" id="modalCancel" class="secondary">Fermer</button>
+        </div>
         <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  downloadScannedOrderPdf(id) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    const title = scan ? `Bon de commande ${orderTypeLabel(scan.type)} ${formatDateFr(scan.date)}` : 'Bon de commande';
+    return downloadScanAsPdf(scan, 'order', title);
+  },
+  async autoCropAllOrderPages(id) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    if (!scan) return toast('Bon de commande introuvable');
+    return autoCropScanPages(scan, replaceOrderScanPage, 'Bon de commande');
   },
   async autoCropOrderPage(id, pageId) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
@@ -2714,12 +2883,7 @@ const actions = {
     if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
     openModal('Rogner la page du bon de commande', cropModalHtml(page), async () => {
       try {
-        const fileData = await cropImageDataUrl(page.fileData, {
-          top: document.querySelector('#cropTop')?.value || 0,
-          bottom: document.querySelector('#cropBottom')?.value || 0,
-          left: document.querySelector('#cropLeft')?.value || 0,
-          right: document.querySelector('#cropRight')?.value || 0
-        });
+        const fileData = await cropImageDataUrl(page.fileData, cropValuesFromModal());
         replaceOrderScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
         closeModal();
         toast('Page rognée');
@@ -2728,6 +2892,7 @@ const actions = {
         toast('Impossible de rogner cette page');
       }
     });
+    bindCropPreview(page.fileData);
   },
   deleteScannedOrderPage(id, pageId) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
@@ -2798,10 +2963,25 @@ const actions = {
     openModal(`${receiptDocLabel(scan.docType)} · ${scanTypeLabel}`, `
       <div class="scan-modal-content">
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(scanTypeLabel)}<br><strong>Document :</strong> ${escapeHtml(receiptDocLabel(scan.docType))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
-        <div class="form-actions"><button type="button" id="modalCancel" class="secondary">Fermer</button></div>
+        <div class="form-actions">
+          <button type="button" data-action="downloadScannedReceiptPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
+          <button type="button" data-action="autoCropAllReceiptPages" data-id="${scan.id}" class="secondary">Rogner auto toutes les pages</button>
+          <button type="button" id="modalCancel" class="secondary">Fermer</button>
+        </div>
         <div class="scan-pages-list">${previews}</div>
       </div>
     `, () => {});
+  },
+  downloadScannedReceiptPdf(id) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    const scanTypeLabel = scan?.docType === 'temperature' ? 'livraison complète' : receiptTypeLabel(scan?.type);
+    const title = scan ? `${receiptDocLabel(scan.docType)} ${scanTypeLabel} ${formatDateFr(scan.date)}` : 'Document de livraison';
+    return downloadScanAsPdf(scan, 'receipt', title);
+  },
+  async autoCropAllReceiptPages(id) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    if (!scan) return toast('Document de livraison introuvable');
+    return autoCropScanPages(scan, replaceReceiptScanPage, receiptDocLabel(scan.docType));
   },
   async autoCropReceiptPage(id, pageId) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);
@@ -2824,12 +3004,7 @@ const actions = {
     if (!scan || !page || !isImageScanPage(page)) return toast('Page image introuvable');
     openModal('Rogner la page du document', cropModalHtml(page), async () => {
       try {
-        const fileData = await cropImageDataUrl(page.fileData, {
-          top: document.querySelector('#cropTop')?.value || 0,
-          bottom: document.querySelector('#cropBottom')?.value || 0,
-          left: document.querySelector('#cropLeft')?.value || 0,
-          right: document.querySelector('#cropRight')?.value || 0
-        });
+        const fileData = await cropImageDataUrl(page.fileData, cropValuesFromModal());
         replaceReceiptScanPage(id, pageId, { fileData, fileType: 'image/jpeg' });
         closeModal();
         toast('Page rognée');
@@ -2838,6 +3013,7 @@ const actions = {
         toast('Impossible de rogner cette page');
       }
     });
+    bindCropPreview(page.fileData);
   },
   deleteScannedReceiptPage(id, pageId) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);

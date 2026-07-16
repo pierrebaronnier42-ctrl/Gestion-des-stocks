@@ -1,5 +1,5 @@
-const CACHE_NAME = 'gestion-stock-web-github-supabase-v5';
-const ASSETS = ['./', './index.html', './styles.css?v=1.30', './app.js?v=1.30', './supabase-config.js?v=1.30', './manifest.json'];
+const CACHE_NAME = 'gestion-stock-web-github-supabase-v6';
+const ASSETS = ['./', './index.html', './styles.css?v=1.31', './app.js?v=1.31', './supabase-config.js?v=1.31', './manifest.json'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));

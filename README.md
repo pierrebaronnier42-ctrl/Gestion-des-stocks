@@ -130,3 +130,11 @@ Si tu vois encore l'ancien texte “Les données sont stockées dans le navigate
 - Les bons de commande et bons de livraison peuvent être scannés page par page sans fermer la caméra.
 - Le ticket température reste un document unique.
 - Cache GitHub Pages mis à jour en v1.30.
+
+
+## Version v6
+
+- Génération de PDF multipage pour les bons de commande et les bons de livraison numérisés.
+- Bouton PDF dans les tableaux et dans la vue détail des documents.
+- Rognage manuel corrigé avec aperçu du résultat avant enregistrement.
+- Rognage automatique possible sur une page ou toutes les pages d’un document.
