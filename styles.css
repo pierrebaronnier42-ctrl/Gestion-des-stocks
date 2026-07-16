@@ -520,3 +520,89 @@ button:disabled, .file-label:disabled {
 .scan-crop-preview { margin-top: 14px; max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 16px; background: #f8fafc; padding: 12px; }
 .order-scan-slot .small, .receipt-scan-slot .small { margin-top: 6px; }
 .nav button span:first-child:last-child { width: auto; }
+
+
+/* Scan multiphoto */
+.scanner-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(15, 23, 42, .82);
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+.scanner-panel {
+  width: min(980px, 100%);
+  max-height: 94vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 22px;
+  padding: 18px;
+  box-shadow: 0 25px 70px rgba(0,0,0,.35);
+}
+.scanner-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.scanner-header h3 { margin: 0 0 6px; }
+.scanner-video-wrap {
+  background: #020617;
+  border-radius: 18px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  min-height: 280px;
+}
+#scannerVideo {
+  width: 100%;
+  max-height: 58vh;
+  display: block;
+  object-fit: contain;
+}
+.scanner-controls {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+.scanner-status {
+  margin-top: 10px;
+  font-weight: 800;
+  color: var(--text);
+}
+.scanner-thumbs {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+.scanner-thumb-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 8px;
+  background: #f9fafb;
+  display: grid;
+  gap: 6px;
+}
+.scanner-thumb-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 10px;
+  background: #e5e7eb;
+}
+.scanner-thumb-card span {
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+@media (max-width: 720px) {
+  .scanner-backdrop { padding: 0; align-items: stretch; }
+  .scanner-panel { border-radius: 0; max-height: 100vh; min-height: 100vh; }
+  .scanner-controls { grid-template-columns: 1fr; }
+  .scanner-video-wrap { min-height: 220px; }
+}

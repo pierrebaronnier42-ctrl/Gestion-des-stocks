@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.29.0-manual-docs-crop';
+const APP_VERSION = '1.30.0-multiphoto-scanner';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -128,6 +128,7 @@ let inventoryDraftValues = {};
 let selectedMonthEndMonth = today().slice(0, 7);
 let monthEndDraftValues = {};
 let supabaseClient = null;
+let activeMultiPhotoScanner = null;
 let cloudReady = false;
 let cloudSaveTimer = null;
 let isApplyingCloudState = false;
@@ -1161,6 +1162,149 @@ function persistScannedReceiptPages(date, type, docType, newPages) {
 }
 
 
+
+function cameraSupported() {
+  return Boolean(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function stopMultiPhotoScanner() {
+  if (activeMultiPhotoScanner?.stream) {
+    activeMultiPhotoScanner.stream.getTracks().forEach(track => track.stop());
+  }
+  activeMultiPhotoScanner = null;
+  document.querySelector('#multiPhotoScanner')?.remove();
+}
+
+function cameraPageFromVideo(video, index, prefix = 'scan') {
+  const sourceWidth = video.videoWidth || 1280;
+  const sourceHeight = video.videoHeight || 720;
+  const maxSide = 1400;
+  const ratio = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(sourceWidth * ratio));
+  canvas.height = Math.max(1, Math.round(sourceHeight * ratio));
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  return {
+    id: uid(),
+    fileName: `${prefix}-page-${String(index).padStart(2, '0')}.jpg`,
+    fileType: 'image/jpeg',
+    fileData: canvas.toDataURL('image/jpeg', 0.72),
+    scannedAt: new Date().toISOString()
+  };
+}
+
+function refreshMultiPhotoScannerPreview() {
+  const scanner = activeMultiPhotoScanner;
+  if (!scanner) return;
+  const countEl = document.querySelector('#scannerPageCount');
+  const thumbsEl = document.querySelector('#scannerThumbs');
+  const validateBtn = document.querySelector('#scannerValidate');
+  if (countEl) countEl.textContent = `${scanner.pages.length} page(s) prise(s)`;
+  if (validateBtn) validateBtn.disabled = !scanner.pages.length;
+  if (thumbsEl) {
+    thumbsEl.innerHTML = scanner.pages.map((page, index) => `
+      <div class="scanner-thumb-card">
+        <img src="${escapeHtml(page.fileData)}" alt="Page ${index + 1}" />
+        <span>Page ${index + 1}</span>
+      </div>
+    `).join('') || '<p class="muted">Aucune page prise pour le moment.</p>';
+  }
+}
+
+async function openMultiPhotoScanner(kind, target) {
+  if (!cameraSupported()) {
+    toast('Appareil photo non disponible : utilise Importer plusieurs pages.');
+    if (kind === 'order') return actions.triggerOrderImport(target.date, target.type);
+    return actions.triggerReceiptImport(target.date, target.type, target.docType);
+  }
+  stopMultiPhotoScanner();
+  const isOrder = kind === 'order';
+  const title = isOrder
+    ? `Bon de commande · ${orderTypeLabel(target.type)} · ${formatDateFr(target.date)}`
+    : `${receiptDocLabel(target.docType)} · ${target.docType === 'temperature' ? 'Livraison complète' : receiptTypeLabel(target.type)} · ${formatDateFr(target.date)}`;
+  const overlay = document.createElement('div');
+  overlay.id = 'multiPhotoScanner';
+  overlay.className = 'scanner-backdrop';
+  overlay.innerHTML = `
+    <div class="scanner-panel" role="dialog" aria-modal="true">
+      <div class="scanner-header">
+        <div>
+          <p class="eyebrow">Scan multipage</p>
+          <h3>${escapeHtml(title)}</h3>
+          <p class="muted">Prends toutes les pages sans fermer l’appareil photo, puis valide l’ensemble.</p>
+        </div>
+        <button type="button" class="icon-btn" id="scannerClose" aria-label="Fermer">×</button>
+      </div>
+      <div class="scanner-video-wrap">
+        <video id="scannerVideo" autoplay playsinline muted></video>
+      </div>
+      <div class="scanner-controls">
+        <button type="button" class="success" id="scannerCapture">Prendre la page</button>
+        <button type="button" class="secondary" id="scannerUndo" disabled>Retirer dernière page</button>
+        <button type="button" class="secondary" id="scannerValidate" disabled>Valider le document</button>
+      </div>
+      <div class="scanner-status" id="scannerPageCount">0 page(s) prise(s)</div>
+      <div class="scanner-thumbs" id="scannerThumbs"><p class="muted">Aucune page prise pour le moment.</p></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    const video = overlay.querySelector('#scannerVideo');
+    video.srcObject = stream;
+    await video.play();
+    activeMultiPhotoScanner = { kind, target, stream, pages: [] };
+    refreshMultiPhotoScannerPreview();
+  } catch (error) {
+    console.error(error);
+    stopMultiPhotoScanner();
+    toast('Impossible d’ouvrir l’appareil photo. Utilise Importer plusieurs pages.');
+    if (kind === 'order') return actions.triggerOrderImport(target.date, target.type);
+    return actions.triggerReceiptImport(target.date, target.type, target.docType);
+  }
+
+  overlay.querySelector('#scannerClose')?.addEventListener('click', () => {
+    if (activeMultiPhotoScanner?.pages?.length && !confirm('Annuler le scan multipage en cours ?')) return;
+    stopMultiPhotoScanner();
+  });
+  overlay.querySelector('#scannerCapture')?.addEventListener('click', () => {
+    const scanner = activeMultiPhotoScanner;
+    const video = overlay.querySelector('#scannerVideo');
+    if (!scanner || !video) return;
+    const prefix = scanner.kind === 'order' ? `bc-${scanner.target.date}-${scanner.target.type}` : `bl-${scanner.target.date}-${scanner.target.type || scanner.target.docType}`;
+    scanner.pages.push(cameraPageFromVideo(video, scanner.pages.length + 1, prefix));
+    const undoBtn = overlay.querySelector('#scannerUndo');
+    if (undoBtn) undoBtn.disabled = false;
+    refreshMultiPhotoScannerPreview();
+    toast(`Page ${scanner.pages.length} ajoutée`);
+  });
+  overlay.querySelector('#scannerUndo')?.addEventListener('click', () => {
+    const scanner = activeMultiPhotoScanner;
+    if (!scanner?.pages?.length) return;
+    scanner.pages.pop();
+    const undoBtn = overlay.querySelector('#scannerUndo');
+    if (undoBtn) undoBtn.disabled = !scanner.pages.length;
+    refreshMultiPhotoScannerPreview();
+  });
+  overlay.querySelector('#scannerValidate')?.addEventListener('click', () => {
+    const scanner = activeMultiPhotoScanner;
+    if (!scanner?.pages?.length) return toast('Prends au moins une page avant de valider.');
+    const pages = [...scanner.pages];
+    const target = { ...scanner.target };
+    const kindToSave = scanner.kind;
+    stopMultiPhotoScanner();
+    if (kindToSave === 'order') {
+      persistScannedOrderPages(target.date, target.type, pages);
+    } else {
+      persistScannedReceiptPages(target.date, target.type, target.docType || 'delivery', pages);
+    }
+  });
+}
+
 function manualOrderTypeOptions(selected = 'general') {
   return INVENTORY_TYPES.map(type => `<option value="${type.id}" ${selected === type.id ? 'selected' : ''}>${escapeHtml(type.label)}</option>`).join('');
 }
@@ -1652,7 +1796,7 @@ function renderOrders() {
       return `
         <div class="order-scan-slot">
           <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) ✓` : ''}</span>
-          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Ajouter photo' : 'Numériser'}</button>
+          <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Scanner pages' : 'Scanner pages'}</button>
           <button type="button" class="small secondary" data-action="triggerOrderImport" data-id="${row.date}" data-type="${type}">Importer plusieurs pages</button>
           ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button>` : ''}
         </div>
@@ -1679,7 +1823,7 @@ function renderOrders() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
-          <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Ajouter photo</button>
+          <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Scanner pages</button>
           <button class="small secondary" data-action="triggerOrderImport" data-id="${scan.date}" data-type="${scan.type}">Importer pages</button>
           <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer le document</button>
         </td>
@@ -1722,7 +1866,7 @@ function renderOrders() {
       <div class="form-grid compact-grid">
         <label>Date de commande<input id="manualOrderDate" type="date" value="${today()}" /></label>
         <label>Type de commande<select id="manualOrderType">${manualOrderTypeOptions()}</select></label>
-        <label>Photo appareil<button type="button" class="secondary full" data-action="triggerManualOrderScan">Numériser / ajouter photo</button></label>
+        <label>Appareil photo<button type="button" class="secondary full" data-action="triggerManualOrderScan">Scanner plusieurs photos</button></label>
         <label>Plusieurs pages<button type="button" class="secondary full" data-action="triggerManualOrderImport">Importer plusieurs pages</button></label>
       </div>
     </div>
@@ -1807,7 +1951,7 @@ function renderReceipts() {
           <span class="badge info">${escapeHtml(receiptTypeLabel(type))}</span>
           <span class="receipt-doc-actions">
             <span class="badge ${deliveryScan ? 'success' : 'warning'}">BL${deliveryScan ? ` · ${scanPageCount(deliveryScan)} page(s) ✓` : ''}</span>
-            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Ajouter photo BL' : 'Numériser BL'}</button>
+            <button type="button" class="small ${deliveryScan ? 'secondary' : ''}" data-action="triggerReceiptScan" data-id="${row.date}" data-type="${type}" data-doc="delivery">${deliveryScan ? 'Scanner pages BL' : 'Scanner pages BL'}</button>
             <button type="button" class="small secondary" data-action="triggerReceiptImport" data-id="${row.date}" data-type="${type}" data-doc="delivery">Importer pages BL</button>
             ${deliveryScan ? `<button type="button" class="small secondary" data-action="viewScannedReceipt" data-id="${deliveryScan.id}">Voir les ${scanPageCount(deliveryScan)} page(s)</button>` : ''}
           </span>
@@ -1855,7 +1999,7 @@ function renderReceipts() {
         <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
-          <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Ajouter photo'}</button>
+          <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Scanner pages'}</button>
           <button class="small secondary" data-action="triggerReceiptImport" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Importer ticket' : 'Importer pages'}</button>
           <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer le document</button>
         </td>
@@ -1890,7 +2034,7 @@ function renderReceipts() {
         <label>Date de livraison<input id="manualReceiptDate" type="date" value="${today()}" /></label>
         <label>Document<select id="manualReceiptDocType">${manualReceiptDocOptions()}</select></label>
         <label>Type BL<select id="manualReceiptType">${manualReceiptTypeOptions()}</select></label>
-        <label>Photo appareil<button type="button" class="secondary full" data-action="triggerManualReceiptScan">Numériser / ajouter photo</button></label>
+        <label>Appareil photo<button type="button" class="secondary full" data-action="triggerManualReceiptScan">Scanner plusieurs photos</button></label>
         <label>Plusieurs pages<button type="button" class="secondary full" data-action="triggerManualReceiptImport">Importer plusieurs pages</button></label>
       </div>
     </div>
@@ -2503,10 +2647,7 @@ const actions = {
   },
   triggerOrderScan(date, type) {
     if (!date || !type) return toast('Choisis une date et un type de commande');
-    pendingOrderScan = { date, type };
-    const input = document.querySelector('#orderScanInput');
-    if (!input) return toast('Impossible d’ouvrir la numérisation');
-    input.click();
+    return openMultiPhotoScanner('order', { date, type });
   },
   triggerOrderImport(date, type) {
     if (!date || !type) return toast('Choisis une date et un type de commande');
@@ -2606,10 +2747,14 @@ const actions = {
     const effectiveDocType = docType || 'delivery';
     const effectiveType = receiptScanScopeType(type || 'delivery', effectiveDocType);
     if (!date || (!effectiveType && effectiveDocType !== 'temperature')) return toast('Choisis une date et un type de livraison');
-    pendingReceiptScan = { date, type: effectiveType, docType: effectiveDocType };
-    const input = document.querySelector('#receiptScanInput');
-    if (!input) return toast('Impossible d’ouvrir la numérisation');
-    input.click();
+    if (effectiveDocType === 'temperature') {
+      pendingReceiptScan = { date, type: effectiveType, docType: effectiveDocType };
+      const input = document.querySelector('#receiptScanInput');
+      if (!input) return toast('Impossible d’ouvrir la numérisation');
+      input.click();
+      return;
+    }
+    return openMultiPhotoScanner('receipt', { date, type: effectiveType, docType: effectiveDocType });
   },
   triggerReceiptImport(date, type, docType = 'delivery') {
     const effectiveDocType = docType || 'delivery';

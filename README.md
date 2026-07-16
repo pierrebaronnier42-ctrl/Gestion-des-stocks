@@ -122,3 +122,11 @@ Si tu vois encore l'ancien texte “Les données sont stockées dans le navigate
 - Conservation du bouton appareil photo pour ajouter une page rapidement.
 - Ajout du rognage automatique et du rognage manuel sur les pages image.
 - Suppression des icônes du menu de navigation.
+
+
+## Version v5
+
+- Ajout du scanner multiphoto : ouverture de l'appareil photo une seule fois, prise de plusieurs pages, puis validation du document complet.
+- Les bons de commande et bons de livraison peuvent être scannés page par page sans fermer la caméra.
+- Le ticket température reste un document unique.
+- Cache GitHub Pages mis à jour en v1.30.
