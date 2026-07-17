@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.45.0-month-end-archive-keep';
+const APP_VERSION = '1.46.0-weekly-reports-order-rates';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -81,6 +81,22 @@ function addDays(date, days) {
   return next;
 }
 
+function startOfWeekDate(value = today()) {
+  const date = parseDate(value);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return addDays(date, diff);
+}
+
+function startOfWeekInput(value = today()) {
+  return formatDateInput(startOfWeekDate(value));
+}
+
+function weekDeliveryDates(weekStart = selectedReportWeek) {
+  const monday = startOfWeekDate(weekStart || today());
+  return [0, 2, 4].map(offset => formatDateInput(addDays(monday, offset)));
+}
+
 function formatDateFr(value) {
   const date = parseDate(value);
   return `${dayNames[date.getDay()]} ${date.getDate()} ${monthNames[date.getMonth()]} ${date.getFullYear()}`;
@@ -109,6 +125,7 @@ const defaultState = () => ({
   orders: [],
   scannedOrders: [],
   scannedReceipts: [],
+  orderModificationRates: {},
   receipts: [],
   movements: [],
   inventorySessions: [],
@@ -140,6 +157,7 @@ let productCategoryFilter = 'all';
 let productSortMode = 'sequence';
 let inventoryDraftValues = {};
 let selectedMonthEndMonth = today().slice(0, 7);
+let selectedReportWeek = startOfWeekInput(today());
 let monthEndDraftValues = {};
 let supabaseClient = null;
 let activeMultiPhotoScanner = null;
@@ -157,6 +175,7 @@ const pages = [
   { id: 'receipts', label: 'Réception', icon: '🚚' },
   { id: 'orders', label: 'Commande', icon: '🧾' },
   { id: 'monthEnd', label: 'Fin de Mois', icon: '📋' },
+  { id: 'reports', label: 'Rapports', icon: '📑' },
   { id: 'products', label: 'Produits', icon: '🏷️' },
   { id: 'zones', label: 'Zones de stockage', icon: '🗺️' },
   { id: 'suppliers', label: 'Fournisseur', icon: '🤝' },
@@ -216,6 +235,7 @@ function normalizeState(input = {}) {
     settings: { ...defaults.settings, ...(parsed.settings || {}) },
     inventorySessions: parsed.inventorySessions || [],
     monthEndSessions: parsed.monthEndSessions || [],
+    orderModificationRates: parsed.orderModificationRates || {},
     scannedOrders: (parsed.scannedOrders || []).map(normalizeScannedDocumentRecord),
     scannedReceipts: (parsed.scannedReceipts || []).map(normalizeScannedDocumentRecord),
     products: (parsed.products || []).map(migrateProduct)
@@ -779,6 +799,7 @@ function render() {
     zones: renderZones,
     suppliers: renderSuppliers,
     monthEnd: renderMonthEnd,
+    reports: renderReports,
     settings: renderSettings
   };
   app.innerHTML = map[currentPage]();
@@ -890,6 +911,23 @@ function bindPageEvents() {
       render();
     });
   }
+
+  const reportWeekInput = document.querySelector('[data-report-week]');
+  if (reportWeekInput) {
+    reportWeekInput.addEventListener('change', event => {
+      selectedReportWeek = startOfWeekInput(event.target.value || today());
+      render();
+    });
+  }
+
+  document.querySelectorAll('[data-order-modification-rate]').forEach(input => {
+    const saveRate = event => {
+      setOrderModificationRate(event.currentTarget.dataset.date, event.currentTarget.dataset.type, event.currentTarget.value);
+      saveState();
+    };
+    input.addEventListener('change', saveRate);
+    input.addEventListener('blur', saveRate);
+  });
 
   document.querySelectorAll('[data-product-inline-field]').forEach(input => {
     const markDirty = event => {
@@ -2044,6 +2082,42 @@ function generateOrderSchedule(weeks = 8) {
 
 function orderTypeLabel(type) {
   return inventoryTypeLabel(type);
+}
+
+function orderRateEditable(type) {
+  return type === 'general' || type === 'ultra';
+}
+
+function orderModificationRateKey(date, type) {
+  return `${date}::${type}`;
+}
+
+function getOrderModificationRate(date, type) {
+  const value = (state.orderModificationRates || {})[orderModificationRateKey(date, type)];
+  return value === undefined || value === null ? '' : value;
+}
+
+function setOrderModificationRate(date, type, value) {
+  state.orderModificationRates = state.orderModificationRates || {};
+  const key = orderModificationRateKey(date, type);
+  const raw = String(value ?? '').replace(',', '.').trim();
+  if (raw === '') {
+    delete state.orderModificationRates[key];
+    return;
+  }
+  const numeric = Number(raw);
+  if (!Number.isFinite(numeric)) return;
+  state.orderModificationRates[key] = Math.round(numeric * 100) / 100;
+}
+
+function orderModificationRateLabel(date, type) {
+  const value = getOrderModificationRate(date, type);
+  if (value === '') return 'Non renseigné';
+  return `${number(value)} %`;
+}
+
+function orderModificationRatesForDate(date) {
+  return ['general', 'ultra'].map(type => `${inventoryTypeLabel(type)} : ${orderModificationRateLabel(date, type)}`).join(' · ');
 }
 
 function getScannedOrder(date, type) {
@@ -3363,6 +3437,7 @@ function renderOrders() {
           <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Scanner pages' : 'Scanner pages'}</button>
           <button type="button" class="small secondary" data-action="triggerOrderImport" data-id="${row.date}" data-type="${type}">Importer plusieurs pages</button>
           ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button><button type="button" class="small success" data-action="downloadScannedOrderPdf" data-id="${scan.id}">PDF</button>` : ''}
+          ${orderRateEditable(type) ? `<label class="order-rate-inline">Taux modification<input data-order-modification-rate data-date="${row.date}" data-type="${type}" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(getOrderModificationRate(row.date, type))}" placeholder="%" /></label>` : ''}
         </div>
       `;
     }).join('');
@@ -3441,7 +3516,7 @@ function renderOrders() {
         <div>
           <p class="eyebrow">Prévisionnel</p>
           <h3>Dates des commandes</h3>
-          <p class="muted">Planning automatique lundi / mercredi / vendredi, avec Général, Ultra frais et HUB une semaine sur deux.</p>
+          <p class="muted">Planning automatique lundi / mercredi / vendredi, avec Général, Ultra frais et HUB une semaine sur deux. Renseigne aussi le taux de modification des commandes Général et Ultra frais.</p>
         </div>
       </div>
       <div class="table-wrap order-forecast-wrap"><table><thead><tr><th>Date</th><th>Jour</th><th>Types de commande</th><th>État</th></tr></thead><tbody>${forecastRows}</tbody></table></div>
@@ -3839,6 +3914,71 @@ function renderMonthEnd() {
     <div class="card" style="margin-top:18px;">
       <div class="toolbar"><h3>Historique fin de mois</h3><span class="muted">Inventaires totaux enregistrés</span></div>
       <div class="table-wrap"><table><thead><tr><th>Mois</th><th>Lignes</th><th>Saisies</th><th>Actions</th></tr></thead><tbody>${historyRows}</tbody></table></div>
+    </div>
+  `;
+}
+
+function weeklyReportDaySummary(date) {
+  const inventoryTypes = inventoryTypesForDate(date);
+  const receiptTypes = receiptTypesForDate(date);
+  const inventorySessions = state.inventorySessions.filter(session => session.date === date);
+  const inventoryLabel = inventorySessions.length
+    ? inventorySessions.map(session => `${inventoryTypeLabel(session.type)} (${inventoryDeliveryTimingLabel(session.deliveryTiming)})`).join('<br>')
+    : '<span class="muted">Aucun inventaire enregistré</span>';
+  const orderLabel = inventoryTypes.map(type => {
+    const scan = getScannedOrder(date, type);
+    return `${orderTypeLabel(type)} : ${scan ? `${scanPageCount(scan)} page(s)` : 'manquant'}`;
+  }).join('<br>');
+  const receiptLabel = receiptTypes.map(type => {
+    const scan = getScannedReceipt(date, type, 'delivery');
+    return `${receiptTypeLabel(type)} : ${scan ? `${scanPageCount(scan)} page(s)` : 'manquant'}`;
+  }).join('<br>');
+  const temperatureScan = getScannedReceipt(date, 'delivery', 'temperature');
+  return {
+    date,
+    dayName: dayNames[parseDate(date).getDay()],
+    inventoryLabel,
+    orderLabel,
+    receiptLabel,
+    temperatureLabel: temperatureScan ? `${scanPageCount(temperatureScan)} page(s)` : 'manquant',
+    rateLabel: orderModificationRatesForDate(date)
+  };
+}
+
+function renderReports() {
+  const weekStart = startOfWeekInput(selectedReportWeek || today());
+  selectedReportWeek = weekStart;
+  const dates = weekDeliveryDates(weekStart);
+  const summaryRows = dates.map(date => weeklyReportDaySummary(date)).map(row => `
+    <tr>
+      <td><strong>${escapeHtml(formatDateFr(row.date))}</strong><br><span class="muted">${escapeHtml(row.date)}</span></td>
+      <td>${escapeHtml(row.dayName)}</td>
+      <td>${row.inventoryLabel}</td>
+      <td>${row.orderLabel}</td>
+      <td>${row.receiptLabel}</td>
+      <td>${escapeHtml(row.temperatureLabel)}</td>
+      <td>${escapeHtml(row.rateLabel)}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <div class="card subpage-heading">
+      <div class="toolbar">
+        <div>
+          <p class="eyebrow">Rapport hebdomadaire</p>
+          <h3>Rapports</h3>
+          <p class="muted">Génère un rapport PDF avec les trois jours de livraison : inventaires, BC, BL, ticket température et taux de modification des commandes.</p>
+        </div>
+        <div class="toolbar-right">
+          <label class="inline-label">Semaine du<input data-report-week type="date" value="${escapeHtml(weekStart)}" /></label>
+          <button data-action="exportWeeklyReportPdf" class="success">Exporter rapport PDF</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar"><h3>Aperçu de la semaine</h3><span class="muted">${escapeHtml(formatDateFr(dates[0]))} au ${escapeHtml(formatDateFr(dates[2]))}</span></div>
+      <div class="table-wrap report-summary-wrap"><table><thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead><tbody>${summaryRows}</tbody></table></div>
+      <p class="muted">Les documents numérisés en photo seront intégrés visuellement au PDF. Les fichiers PDF importés sont listés dans le rapport, puis restent téléchargeables depuis leurs pages BC/BL.</p>
     </div>
   `;
 }
@@ -4947,6 +5087,11 @@ Annuler = non, il sera archivé normalement.`);
   syncFromCloud() { syncFromCloud(); },
   syncToCloud() { syncToCloudNow(); },
   exportJson() { downloadJson(); },
+  exportWeeklyReportPdf() {
+    const weekStart = startOfWeekInput(document.querySelector('[data-report-week]')?.value || selectedReportWeek || today());
+    selectedReportWeek = weekStart;
+    printWeeklyReportPdf(weekStart);
+  },
   exportCsv(_id, type) { downloadCsv(type || _id); }
 };
 
@@ -5126,6 +5271,158 @@ function printMonthEndPdf(title, rows, subtitle = '') {
   </table>
   <footer>Export PDF généré depuis la page Fin de mois.</footer>
   <script>window.addEventListener('load', () => setTimeout(() => window.print(), 250));</script>
+</body>
+</html>`;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('La fenêtre PDF a été bloquée par le navigateur. Autorise les pop-ups puis réessaie.');
+    return;
+  }
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
+function weeklyReportInventorySectionHtml(date) {
+  const sessions = state.inventorySessions
+    .filter(session => session.date === date)
+    .sort((a, b) => String(a.type).localeCompare(String(b.type)));
+  if (!sessions.length) return '<p class="muted-text">Aucun inventaire enregistré pour cette date.</p>';
+  return sessions.map(session => {
+    const rows = (session.lines || []).map(line => {
+      const product = getProduct(line.productId) || {};
+      return `
+        <tr>
+          <td>${escapeHtml(product.name || 'Produit supprimé')}</td>
+          <td>${escapeHtml(productCategoryLabel(product))}</td>
+          <td>${escapeHtml(getZone(product.storageZoneId)?.name || product.storageLabel || '')}</td>
+          <td>${number(line.expectedQty)}</td>
+          <td>${number(line.countedQty)}</td>
+          <td>${number(line.diff)}</td>
+          <td>${escapeHtml(line.unit || product.unit || '')}</td>
+          <td>${escapeHtml(line.note || '')}</td>
+        </tr>
+      `;
+    }).join('') || '<tr><td colspan="8">Aucune ligne.</td></tr>';
+    return `
+      <h4>Inventaire ${escapeHtml(inventoryTypeLabel(session.type))} · ${escapeHtml(inventoryDeliveryTimingLabel(session.deliveryTiming))}</h4>
+      <table class="compact-table">
+        <thead><tr><th>Produit</th><th>Catégorie</th><th>Zone</th><th>Théorique</th><th>Compté</th><th>Écart</th><th>Unité</th><th>Note</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }).join('');
+}
+
+function weeklyReportScansForDate(date) {
+  const docs = [];
+  inventoryTypesForDate(date).forEach(type => docs.push({ label: `BC ${orderTypeLabel(type)}`, scan: getScannedOrder(date, type) }));
+  receiptTypesForDate(date).forEach(type => docs.push({ label: `BL ${receiptTypeLabel(type)}`, scan: getScannedReceipt(date, type, 'delivery') }));
+  docs.push({ label: 'Ticket température', scan: getScannedReceipt(date, 'delivery', 'temperature') });
+  return docs;
+}
+
+function weeklyReportDocumentSummaryHtml(date) {
+  return weeklyReportScansForDate(date).map(item => {
+    const pages = scanPages(item.scan || {});
+    return `<tr><td>${escapeHtml(item.label)}</td><td>${item.scan ? 'Présent' : 'Manquant'}</td><td>${pages.length || '-'}</td><td>${escapeHtml(pages.map(page => page.fileName || '').filter(Boolean).join(' | ') || '-')}</td></tr>`;
+  }).join('');
+}
+
+function weeklyReportDocumentPagesHtml(date) {
+  return weeklyReportScansForDate(date).map(item => {
+    if (!item.scan) return `<div class="doc-block missing"><strong>${escapeHtml(item.label)}</strong><br>Document manquant.</div>`;
+    const pages = scanPages(item.scan);
+    if (!pages.length) return `<div class="doc-block missing"><strong>${escapeHtml(item.label)}</strong><br>Aucune page conservée.</div>`;
+    return pages.map((page, index) => {
+      const title = `${item.label} · page ${index + 1}/${pages.length}`;
+      if (isImageScanPage(page)) {
+        return `<div class="doc-page"><div class="doc-title">${escapeHtml(title)}</div><img src="${escapeHtml(page.fileData)}" alt="${escapeHtml(title)}" /></div>`;
+      }
+      return `<div class="doc-block"><strong>${escapeHtml(title)}</strong><br>Fichier importé : ${escapeHtml(page.fileName || 'document PDF')}<br><span>Le fichier PDF reste consultable depuis la page d’origine.</span></div>`;
+    }).join('');
+  }).join('');
+}
+
+function printWeeklyReportPdf(weekStart) {
+  const normalizedWeekStart = startOfWeekInput(weekStart || today());
+  const dates = weekDeliveryDates(normalizedWeekStart);
+  const printedAt = new Date().toLocaleString('fr-FR');
+  const title = `Rapport hebdomadaire - semaine du ${formatDateFr(normalizedWeekStart)}`;
+  const summaryRows = dates.map(date => weeklyReportDaySummary(date)).map(row => `
+    <tr>
+      <td><strong>${escapeHtml(formatDateFr(row.date))}</strong><br><span>${escapeHtml(row.date)}</span></td>
+      <td>${escapeHtml(row.dayName)}</td>
+      <td>${row.inventoryLabel}</td>
+      <td>${row.orderLabel}</td>
+      <td>${row.receiptLabel}</td>
+      <td>${escapeHtml(row.temperatureLabel)}</td>
+      <td>${escapeHtml(row.rateLabel)}</td>
+    </tr>
+  `).join('');
+  const daySections = dates.map(date => `
+    <section class="day-section">
+      <h2>${escapeHtml(formatDateFr(date))}</h2>
+      <div class="rate-box"><strong>Taux de modification commandes :</strong> ${escapeHtml(orderModificationRatesForDate(date))}</div>
+      <h3>Inventaires</h3>
+      ${weeklyReportInventorySectionHtml(date)}
+      <h3>Documents BC / BL / ticket température</h3>
+      <table class="compact-table"><thead><tr><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th></tr></thead><tbody>${weeklyReportDocumentSummaryHtml(date)}</tbody></table>
+      <div class="document-pages">${weeklyReportDocumentPagesHtml(date)}</div>
+    </section>
+  `).join('');
+  const html = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #111827; margin: 0; font-size: 11px; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    h2 { font-size: 17px; margin: 16px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #111827; }
+    h3 { font-size: 14px; margin: 12px 0 6px; }
+    h4 { font-size: 12px; margin: 10px 0 4px; }
+    .meta { font-size: 10px; color: #4b5563; text-align: right; }
+    .subtitle, span, .muted-text { color: #6b7280; }
+    .rate-box { border: 1px solid #d1d5db; border-radius: 8px; padding: 7px; background: #f9fafb; margin-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+    th, td { border: 1px solid #d1d5db; padding: 4px 5px; vertical-align: top; }
+    th { background: #f3f4f6; text-align: left; text-transform: uppercase; letter-spacing: .03em; font-size: 9px; }
+    .compact-table { font-size: 9px; }
+    .day-section { page-break-before: always; }
+    .day-section:first-of-type { page-break-before: auto; }
+    .document-pages { display: grid; gap: 10px; }
+    .doc-page { page-break-inside: avoid; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; margin-top: 8px; }
+    .doc-page img { display: block; max-width: 100%; max-height: 245mm; margin: 4px auto 0; object-fit: contain; }
+    .doc-title { font-weight: 700; margin-bottom: 4px; }
+    .doc-block { border: 1px dashed #9ca3af; border-radius: 8px; padding: 8px; margin-top: 8px; background: #f9fafb; }
+    .missing { color: #92400e; background: #fffbeb; }
+    footer { margin-top: 8px; font-size: 10px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>${escapeHtml(title)}</h1>
+      <p class="subtitle">Trois jours de livraison : lundi, mercredi, vendredi</p>
+    </div>
+    <div class="meta">
+      <strong>${escapeHtml(state.settings.companyName || 'Gestion Stock')}</strong><br>
+      Exporté le ${escapeHtml(printedAt)}<br>
+      Version ${escapeHtml(APP_VERSION)}
+    </div>
+  </header>
+  <h2>Synthèse semaine</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead>
+    <tbody>${summaryRows}</tbody>
+  </table>
+  ${daySections}
+  <footer>Rapport hebdomadaire généré depuis la page Rapports.</footer>
+  <script>window.addEventListener('load', () => setTimeout(() => window.print(), 350));</script>
 </body>
 </html>`;
   const printWindow = window.open('', '_blank');

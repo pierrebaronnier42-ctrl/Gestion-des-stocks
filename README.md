@@ -218,3 +218,9 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Les produits archivés conservés restent visibles dans Fin de mois uniquement pour le mois sélectionné correspondant.
 - Boutons dans Produits archivés pour ajouter ou retirer cette conservation temporaire.
 - Export CSV/PDF Fin de mois indique les lignes archivées conservées ce mois.
+
+## Version 1.46
+
+- Ajout d'un taux de modification (%) par jour pour les commandes Général et Ultra frais.
+- Ajout de la page Rapports après Fin de mois.
+- Export PDF hebdomadaire avec les trois jours de livraison, les inventaires, les BC, les BL, les tickets température et les taux de modification.
