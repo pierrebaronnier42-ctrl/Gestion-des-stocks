@@ -774,3 +774,177 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
     width: 100%;
   }
 }
+
+
+/* v1.44 - catalogue produits à l'échelle tablette/mobile */
+.product-catalog-wrap {
+  width: 100%;
+}
+.product-catalog-table {
+  min-width: 1080px;
+  table-layout: fixed;
+}
+.product-catalog-table th,
+.product-catalog-table td {
+  padding: 10px 9px;
+  word-break: break-word;
+}
+.product-catalog-table th:nth-child(1) { width: 21%; }
+.product-catalog-table th:nth-child(2) { width: 10%; }
+.product-catalog-table th:nth-child(3) { width: 11%; }
+.product-catalog-table th:nth-child(4) { width: 14%; }
+.product-catalog-table th:nth-child(5) { width: 12%; }
+.product-catalog-table th:nth-child(6) { width: 8%; }
+.product-catalog-table th:nth-child(7) { width: 13%; }
+.product-catalog-table th:nth-child(8) { width: 8%; }
+.product-catalog-table th:nth-child(9) { width: 15%; }
+.product-catalog-table .badge {
+  white-space: normal;
+}
+.product-catalog-table .actions {
+  gap: 6px;
+}
+.product-catalog-table .actions .small {
+  padding: 6px 8px;
+}
+.product-catalog-table .sequence-input {
+  width: 78px;
+  min-width: 78px;
+}
+.product-catalog-table .inline-product-select,
+.product-catalog-table .inline-zone-select {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+@media (min-width: 901px) and (max-width: 1320px) {
+  .product-catalog-table {
+    min-width: 0;
+    width: 100%;
+    font-size: 12px;
+  }
+  .product-catalog-table th,
+  .product-catalog-table td {
+    padding: 8px 6px;
+  }
+  .product-catalog-table .badge {
+    padding: 4px 7px;
+    font-size: 11px;
+  }
+  .product-catalog-table .small {
+    font-size: 11px;
+    padding: 6px 7px;
+  }
+  .product-catalog-table .sequence-input {
+    width: 70px;
+    min-width: 70px;
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .product-catalog-table input,
+  .product-catalog-table select {
+    font-size: 12px;
+    padding: 8px 7px;
+  }
+}
+
+@media (max-width: 900px) {
+  .product-catalog-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+  .product-catalog-table,
+  .product-catalog-table thead,
+  .product-catalog-table tbody,
+  .product-catalog-table tr,
+  .product-catalog-table td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+  .product-catalog-table {
+    border-collapse: separate;
+    border-spacing: 0 12px;
+  }
+  .product-catalog-table thead {
+    display: none;
+  }
+  .product-catalog-table tr {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: #fff;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, .07);
+    overflow: hidden;
+  }
+  .product-catalog-table tr.duplicate-row {
+    border-color: rgba(239, 68, 68, .35);
+    background: rgba(239, 68, 68, .04);
+  }
+  .product-catalog-table tr.archived-row {
+    background: #f9fafb;
+  }
+  .product-catalog-table td {
+    display: grid;
+    grid-template-columns: minmax(112px, 34%) minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .product-catalog-table td:last-child {
+    border-bottom: 0;
+  }
+  .product-catalog-table td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: .035em;
+  }
+  .product-catalog-table .product-name-cell {
+    grid-template-columns: 1fr;
+    background: #f8fafc;
+  }
+  .product-catalog-table .product-name-cell::before {
+    display: none;
+  }
+  .product-catalog-table .product-name-cell strong {
+    font-size: 16px;
+  }
+  .product-catalog-table .actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .product-catalog-table .actions::before {
+    margin-bottom: 2px;
+  }
+  .product-catalog-table .actions button {
+    width: 100%;
+  }
+  .product-catalog-table .sequence-input,
+  .product-catalog-table .inline-product-select,
+  .product-catalog-table .inline-zone-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+  .product-catalog-table .badge {
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .product-catalog-table td {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .product-catalog-table td::before {
+    margin-bottom: 0;
+  }
+}

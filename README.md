@@ -202,3 +202,12 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Le bouton Sauvegarder apparaît uniquement sur la ligne modifiée.
 - La modification de séquence reste synchronisée avec Fin de mois et conserve l’alerte de doublon validable.
 - Cache GitHub Pages mis à jour en v1.43.
+
+
+## Version v1.44
+
+- Catalogue produits adapté à l'affichage tablette et smartphone.
+- Sur tablette, le tableau est compacté pour rentrer à la bonne échelle.
+- Sur smartphone, les produits passent en cartes lisibles au lieu d'un grand tableau horizontal.
+- Les listes déroulantes Catégorie / Zone principale et la séquence restent modifiables directement dans la ligne.
+- Cache GitHub Pages mis à jour en v1.44.

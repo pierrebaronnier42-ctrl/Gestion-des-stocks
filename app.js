@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.43.0-fixed-category-inline-products';
+const APP_VERSION = '1.44.0-responsive-product-catalog';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -3226,22 +3226,22 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
       const sequence = displayProductSequence(p);
       return `
         <tr data-product-row="${escapeHtml(p.id)}" class="${archived ? 'archived-row' : ''} ${duplicate ? 'duplicate-row' : ''}">
-          <td><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')}</span></td>
-          <td>
+          <td data-label="Produit" class="product-name-cell"><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')}</span></td>
+          <td data-label="Séquence" class="product-sequence-cell">
             <input class="mini-input sequence-input ${duplicate ? 'duplicate-input' : ''}" data-product-inline-field="sequence" data-product-inline-sequence="${escapeHtml(p.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml(sequence)}" ${archived ? 'disabled' : ''} />
             ${duplicate ? '<br><span class="badge warning">Doublon validable</span>' : ''}
           </td>
-          <td>
+          <td data-label="Catégorie" class="product-category-cell">
             <select class="mini-select inline-product-select" data-product-inline-field="category" data-product-inline-category="${escapeHtml(p.id)}" ${archived ? 'disabled' : ''}>${productCategorySelectOptions(productCategoryLabel(p))}</select>
           </td>
-          <td>${inventorySlotBadges(p) || '<span class="muted">Non affecté</span>'}</td>
-          <td>${number(stockByProduct(p.id))} ${escapeHtml(p.unit || '')}<br><span class="muted">${escapeHtml(p.packageSize || '')}</span></td>
-          <td>${number(p.minStock || 0)} / ${number(p.maxStock || 0)}</td>
-          <td>
+          <td data-label="Planning inventaire" class="product-planning-cell">${inventorySlotBadges(p) || '<span class="muted">Non affecté</span>'}</td>
+          <td data-label="Stock / conditionnement" class="product-stock-cell">${number(stockByProduct(p.id))} ${escapeHtml(p.unit || '')}<br><span class="muted">${escapeHtml(p.packageSize || '')}</span></td>
+          <td data-label="Mini / Maxi" class="product-minmax-cell">${number(p.minStock || 0)} / ${number(p.maxStock || 0)}</td>
+          <td data-label="Zone principale" class="product-zone-cell">
             <select class="mini-select inline-zone-select" data-product-inline-field="zone" data-product-inline-zone="${escapeHtml(p.id)}" ${archived ? 'disabled' : ''}>${productInlineZoneOptions(p.storageZoneId || '')}</select>
           </td>
-          <td>${archived ? '<span class="badge danger">Archivé</span>' : stockBadge(p)}</td>
-          <td class="actions">
+          <td data-label="État" class="product-state-cell">${archived ? '<span class="badge danger">Archivé</span>' : stockBadge(p)}</td>
+          <td data-label="Actions" class="actions product-actions-cell">
             <button class="small success inline-save hidden-inline" data-action="saveProductInline" data-id="${p.id}" data-product-inline-save="${escapeHtml(p.id)}">Sauvegarder</button>
             <button class="small secondary" data-action="openProduct" data-id="${p.id}">Modifier</button>
             ${archived
@@ -3315,7 +3315,7 @@ function renderProducts() {
         <h3>${isArchivedView ? 'Archive produits' : 'Catalogue produits actifs'}</h3>
         <span class="muted">${filteredCount} affiché(s) · ${isArchivedView ? archivedProducts.length + ' archivé(s)' : activeProducts.length + ' actif(s) · ' + noPlan + ' sans planning'}</span>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Séquence</th><th>Catégorie</th><th>Planning inventaire</th><th>Stock / conditionnement</th><th>Mini / Maxi</th><th>Zone principale</th><th>État</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="table-wrap product-catalog-wrap"><table class="product-catalog-table"><thead><tr><th>Produit</th><th>Séquence</th><th>Catégorie</th><th>Planning inventaire</th><th>Stock / conditionnement</th><th>Mini / Maxi</th><th>Zone principale</th><th>État</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
   `;
 }
