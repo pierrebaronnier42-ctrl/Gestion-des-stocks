@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.44.0-responsive-product-catalog';
+const APP_VERSION = '1.45.0-month-end-archive-keep';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -443,6 +443,21 @@ function getMonthEndSession(month) {
   return (state.monthEndSessions || []).find(session => session.month === month);
 }
 
+function currentMonthKey() {
+  return today().slice(0, 7);
+}
+
+function archivedProductKeptForMonthEnd(product = {}, month = currentMonthKey()) {
+  return product.active === false && String(product.monthEndKeepMonth || '') === String(month || '');
+}
+
+function productsForMonthEnd(month = currentMonthKey()) {
+  return state.products.filter(product => product.active !== false || archivedProductKeptForMonthEnd(product, month));
+}
+
+function monthEndKeepLabel(product = {}) {
+  return archivedProductKeptForMonthEnd(product, currentMonthKey()) ? `Conservé fin de mois ${product.monthEndKeepMonth}` : '';
+}
 
 function monthEndDraftKey(month) {
   return month || selectedMonthEndMonth || today().slice(0, 7);
@@ -489,7 +504,7 @@ function cacheCurrentMonthEndDraft() {
   const month = document.querySelector('[data-month-end-month]')?.value || selectedMonthEndMonth || today().slice(0, 7);
   selectedMonthEndMonth = month;
   const draft = {};
-  state.products.filter(product => product.active !== false).forEach(product => {
+  productsForMonthEnd(month).forEach(product => {
     const orderInput = document.querySelector(`[data-month-order="${product.id}"]`);
     const ueInput = document.querySelector(`[data-month-ue="${product.id}"]`);
     const suInput = document.querySelector(`[data-month-su="${product.id}"]`);
@@ -864,6 +879,14 @@ function bindPageEvents() {
     sortSelect.value = productSortMode;
     sortSelect.addEventListener('change', event => {
       productSortMode = event.target.value;
+      render();
+    });
+  }
+
+  const monthEndInput = document.querySelector('[data-month-end-month]');
+  if (monthEndInput) {
+    monthEndInput.addEventListener('change', event => {
+      selectedMonthEndMonth = event.target.value || currentMonthKey();
       render();
     });
   }
@@ -3224,6 +3247,7 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
       const archived = p.active === false;
       const duplicate = !archived && duplicateMap.has(p.id);
       const sequence = displayProductSequence(p);
+      const keepMonthEnd = monthEndKeepLabel(p);
       return `
         <tr data-product-row="${escapeHtml(p.id)}" class="${archived ? 'archived-row' : ''} ${duplicate ? 'duplicate-row' : ''}">
           <td data-label="Produit" class="product-name-cell"><strong>${escapeHtml(p.name)}</strong><br><span class="muted">${escapeHtml(p.sku || 'Sans réf.')}</span></td>
@@ -3240,12 +3264,12 @@ function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
           <td data-label="Zone principale" class="product-zone-cell">
             <select class="mini-select inline-zone-select" data-product-inline-field="zone" data-product-inline-zone="${escapeHtml(p.id)}" ${archived ? 'disabled' : ''}>${productInlineZoneOptions(p.storageZoneId || '')}</select>
           </td>
-          <td data-label="État" class="product-state-cell">${archived ? '<span class="badge danger">Archivé</span>' : stockBadge(p)}</td>
+          <td data-label="État" class="product-state-cell">${archived ? `<span class="badge danger">Archivé</span>${keepMonthEnd ? `<br><span class="badge info">${escapeHtml(keepMonthEnd)}</span>` : ''}` : stockBadge(p)}</td>
           <td data-label="Actions" class="actions product-actions-cell">
             <button class="small success inline-save hidden-inline" data-action="saveProductInline" data-id="${p.id}" data-product-inline-save="${escapeHtml(p.id)}">Sauvegarder</button>
             <button class="small secondary" data-action="openProduct" data-id="${p.id}">Modifier</button>
             ${archived
-              ? `<button class="small success" data-action="restoreProduct" data-id="${p.id}">Réintégrer</button><button class="small danger-soft" data-action="deleteProduct" data-id="${p.id}">Supprimer</button>`
+              ? `<button class="small success" data-action="restoreProduct" data-id="${p.id}">Réintégrer</button>${archivedProductKeptForMonthEnd(p, currentMonthKey()) ? `<button class="small secondary" data-action="clearArchivedMonthEndKeep" data-id="${p.id}">Retirer fin de mois</button>` : `<button class="small secondary" data-action="keepArchivedForCurrentMonthEnd" data-id="${p.id}">Garder fin de mois</button>`}<button class="small danger-soft" data-action="deleteProduct" data-id="${p.id}">Supprimer</button>`
               : `<button class="small warning-soft" data-action="archiveProduct" data-id="${p.id}">Archiver</button>`}
           </td>
         </tr>
@@ -3740,9 +3764,10 @@ function renderMonthEnd() {
   const session = getMonthEndSession(month);
   const lineMap = new Map((session?.lines || []).map(line => [line.productId, line]));
   const draftForMonth = monthEndDraftValues[monthEndDraftKey(month)] || {};
-  const activeProducts = state.products.filter(p => p.active !== false).sort(monthEndProductSortWithDraft(draftForMonth));
-  const filteredProducts = filterRows(activeProducts, ['sku', 'name', 'category', 'storageLabel', 'packageSize', 'sequence']).sort(monthEndProductSortWithDraft(draftForMonth));
-  const duplicates = getMonthEndDuplicateOrders(activeProducts, draftForMonth);
+  const monthEndProducts = productsForMonthEnd(month).sort(monthEndProductSortWithDraft(draftForMonth));
+  const temporarilyKeptProducts = monthEndProducts.filter(product => archivedProductKeptForMonthEnd(product, month));
+  const filteredProducts = filterRows(monthEndProducts, ['sku', 'name', 'category', 'storageLabel', 'packageSize', 'sequence']).sort(monthEndProductSortWithDraft(draftForMonth));
+  const duplicates = getMonthEndDuplicateOrders(monthEndProducts, draftForMonth);
   const duplicateOrders = new Set(duplicates.map(group => String(group.order)));
   const duplicateAlert = duplicates.length ? `
     <div class="alert warning month-duplicate-alert">
@@ -3762,7 +3787,7 @@ function renderMonthEnd() {
           <input class="sort-input ${isDuplicate ? 'duplicate-input' : ''}" data-month-order="${escapeHtml(product.id)}" type="number" min="1000" max="9999" step="1" value="${escapeHtml((draftLine.order ?? productSequenceValue(product)) || monthEndProductOrder(product))}" />
           ${isDuplicate ? '<br><span class="badge danger">Doublon</span>' : ''}
         </td>
-        <td><strong>${escapeHtml(product.name)}</strong><br><span class="muted">${escapeHtml(product.sku || 'Sans réf.')} · ${escapeHtml(product.packageSize || '')}</span></td>
+        <td><strong>${escapeHtml(product.name)}</strong>${archivedProductKeptForMonthEnd(product, month) ? ' <span class="badge info">Archivé conservé ce mois</span>' : ''}<br><span class="muted">${escapeHtml(product.sku || 'Sans réf.')} · ${escapeHtml(product.packageSize || '')}</span></td>
         <td>${escapeHtml(productCategoryLabel(product))}</td>
         <td>${escapeHtml(getZone(product.storageZoneId)?.name || product.storageLabel || '-')}</td>
         <td><input class="count-input" data-month-ue="${escapeHtml(product.id)}" type="number" step="0.01" min="0" inputmode="decimal" value="${escapeHtml(draftLine.ue ?? line.ue ?? '')}" placeholder="U.E" /></td>
@@ -3771,7 +3796,7 @@ function renderMonthEnd() {
         <td><input data-month-note="${escapeHtml(product.id)}" value="${escapeHtml(draftLine.note ?? line.note ?? '')}" placeholder="Note" /></td>
       </tr>
     `;
-  }).join('') || `<tr><td colspan="8" class="empty">Aucun produit actif à afficher.</td></tr>`;
+  }).join('') || `<tr><td colspan="8" class="empty">Aucun produit à afficher pour la fin de mois.</td></tr>`;
 
   const historyRows = (state.monthEndSessions || []).slice().sort((a, b) => String(b.month).localeCompare(String(a.month))).map(item => `
     <tr>
@@ -3807,7 +3832,7 @@ function renderMonthEnd() {
     <div class="card" style="margin-top:18px;">
       <div class="toolbar">
         <input class="search" data-search placeholder="Rechercher produit, référence, catégorie..." />
-        <span class="muted">${filteredProducts.length} affiché(s) · ${activeProducts.length} produit(s) actif(s)</span>
+        <span class="muted">${filteredProducts.length} affiché(s) · ${monthEndProducts.length} produit(s) fin de mois${temporarilyKeptProducts.length ? ` · ${temporarilyKeptProducts.length} archivé(s) conservé(s) ce mois` : ''}</span>
       </div>
       <div class="table-wrap"><table><thead><tr><th>N° tri</th><th>Produit</th><th>Catégorie</th><th>Zone</th><th>U.E</th><th>S.U</th><th>U.U</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>
     </div>
@@ -4028,13 +4053,37 @@ const actions = {
     const product = getProduct(id);
     if (!product) return;
     if (!confirm(`Archiver ${product.name} ? Il ne sera plus proposé dans les inventaires, mais tu pourras le réintégrer plus tard.`)) return;
-    state.products = state.products.map(p => p.id === id ? { ...p, active: false, archivedAt: new Date().toISOString() } : p);
-    saveState(); render(); toast('Produit archivé');
+    const month = currentMonthKey();
+    const keepForMonthEnd = confirm(`Garder ${product.name} dans la Fin de mois ${month} uniquement ?
+
+OK = oui, il restera visible uniquement ce mois-ci.
+Annuler = non, il sera archivé normalement.`);
+    state.products = state.products.map(p => p.id === id ? {
+      ...p,
+      active: false,
+      archivedAt: new Date().toISOString(),
+      monthEndKeepMonth: keepForMonthEnd ? month : '',
+      monthEndKeepCreatedAt: keepForMonthEnd ? new Date().toISOString() : ''
+    } : p);
+    saveState(); render(); toast(keepForMonthEnd ? 'Produit archivé et conservé pour la fin de mois en cours' : 'Produit archivé');
+  },
+  keepArchivedForCurrentMonthEnd(id) {
+    const product = getProduct(id);
+    if (!product || product.active !== false) return;
+    const month = currentMonthKey();
+    state.products = state.products.map(p => p.id === id ? { ...p, monthEndKeepMonth: month, monthEndKeepCreatedAt: new Date().toISOString() } : p);
+    saveState(); render(); toast('Produit conservé pour la fin de mois en cours');
+  },
+  clearArchivedMonthEndKeep(id) {
+    const product = getProduct(id);
+    if (!product) return;
+    state.products = state.products.map(p => p.id === id ? { ...p, monthEndKeepMonth: '', monthEndKeepCreatedAt: '' } : p);
+    saveState(); render(); toast('Produit retiré de la fin de mois en cours');
   },
   restoreProduct(id) {
     const product = getProduct(id);
     if (!product) return;
-    const restoredProduct = { ...product, active: true, restoredAt: new Date().toISOString() };
+    const restoredProduct = { ...product, active: true, restoredAt: new Date().toISOString(), monthEndKeepMonth: '', monthEndKeepCreatedAt: '' };
     const activeProducts = state.products.filter(item => item.active !== false || item.id === id).map(item => item.id === id ? restoredProduct : item);
     const duplicates = getProductSequenceDuplicates(activeProducts).filter(group => group.items.some(item => item.id === id));
     if (duplicates.length) {
@@ -4140,7 +4189,7 @@ const actions = {
     const month = document.querySelector('[data-month-end-month]')?.value || selectedMonthEndMonth || today().slice(0, 7);
     selectedMonthEndMonth = month;
     const draft = cacheCurrentMonthEndDraft();
-    const products = state.products.filter(product => product.active !== false);
+    const products = productsForMonthEnd(month);
     products.forEach(product => {
       if (!draft[product.id]) draft[product.id] = {};
       draft[product.id].order = productSequenceValue(product) || displayProductSequence(product);
@@ -4160,7 +4209,7 @@ const actions = {
     const draft = cacheCurrentMonthEndDraft();
     const previous = getMonthEndSession(month);
     const previousLines = new Map((previous?.lines || []).map(line => [line.productId, line]));
-    const products = state.products.filter(p => p.active !== false);
+    const products = productsForMonthEnd(month);
     const invalidSequences = products.filter(product => {
       const raw = draft[product.id]?.order;
       const value = Number(raw || 0);
@@ -4203,7 +4252,8 @@ const actions = {
         ue: readValue('ue'),
         su: readValue('su'),
         uu: readValue('uu'),
-        note: readValue('note')
+        note: readValue('note'),
+        archivedKeptForMonth: archivedProductKeptForMonthEnd(product, month)
       };
     });
     const session = {
@@ -4917,7 +4967,7 @@ function printInventoryPdf(date, type, rows, deliveryTiming = '') {
   const rowsHtml = rows.map(line => `
     <tr>
       <td>${escapeHtml(line.order ?? '')}</td>
-      <td><strong>${escapeHtml(line.name || '')}</strong><br><span>${escapeHtml(line.packageSize || '')}</span></td>
+      <td><strong>${escapeHtml(line.name || '')}</strong>${line.archivedKeptForMonth ? ' <span>(archivé conservé ce mois)</span>' : ''}<br><span>${escapeHtml(line.packageSize || '')}</span></td>
       <td>${escapeHtml(line.category || '')}</td>
       <td>${escapeHtml(line.zone || '')}</td>
       <td>${number(line.expectedQty)}</td>
@@ -4994,8 +5044,7 @@ function monthEndCurrentRows(month) {
   const session = getMonthEndSession(month);
   const previousLines = new Map((session?.lines || []).map(line => [line.productId, line]));
   const draftForMonth = monthEndDraftValues[monthEndDraftKey(month)] || {};
-  return state.products
-    .filter(product => product.active !== false)
+  return productsForMonthEnd(month)
     .slice()
     .sort(monthEndProductSortWithDraft(draftForMonth))
     .map(product => {
@@ -5012,7 +5061,8 @@ function monthEndCurrentRows(month) {
         ue: readValue('ue'),
         su: readValue('su'),
         uu: readValue('uu'),
-        note: readValue('note')
+        note: readValue('note'),
+        archivedKeptForMonth: archivedProductKeptForMonthEnd(product, month)
       };
     });
 }
@@ -5023,7 +5073,7 @@ function printMonthEndPdf(title, rows, subtitle = '') {
     <tr>
       <td>${escapeHtml(line.order ?? '')}</td>
       <td>${escapeHtml(line.sku || '')}</td>
-      <td><strong>${escapeHtml(line.name || '')}</strong><br><span>${escapeHtml(line.packageSize || '')}</span></td>
+      <td><strong>${escapeHtml(line.name || '')}</strong>${line.archivedKeptForMonth ? ' <span>(archivé conservé ce mois)</span>' : ''}<br><span>${escapeHtml(line.packageSize || '')}</span></td>
       <td>${escapeHtml(line.category || '')}</td>
       <td>${escapeHtml(line.zone || '')}</td>
       <td>${escapeHtml(line.ue ?? '')}</td>
@@ -5122,7 +5172,7 @@ function buildCsvDatasets() {
   return {
     inventory: state.products.map(p => ({
       reference: p.sku, produit: p.name, sequence: productSequenceValue(p), zone_stockage: productCategoryLabel(p), conditionnement: p.packageSize || '', planning_inventaire: productInventorySlots(p).map(inventorySlotLabel).join(', '), ordres_inventaire: productInventorySlots(p).map(slot => `${inventorySlotLabel(slot)}=${productInventoryOrder(p, slot)}`).join(', '), unite: p.unit, stock: stockByProduct(p.id), stock_min: p.minStock, stock_max: p.maxStock,
-      zone: getZone(p.storageZoneId)?.name || '', fournisseur: getSupplier(p.supplierId)?.name || '', prix_dernier_achat: p.lastPrice || 0, actif: p.active !== false ? 'oui' : 'non', archive_le: p.archivedAt || ''
+      zone: getZone(p.storageZoneId)?.name || '', fournisseur: getSupplier(p.supplierId)?.name || '', prix_dernier_achat: p.lastPrice || 0, actif: p.active !== false ? 'oui' : 'non', archive_le: p.archivedAt || '', conserve_fin_de_mois: p.monthEndKeepMonth || ''
     })),
     lowStock: state.products.filter(p => stockByProduct(p.id) <= Number(p.minStock || 0)).map(p => ({ produit: p.name, stock: stockByProduct(p.id), stock_min: p.minStock, zone: getZone(p.storageZoneId)?.name || '' })),
     orders: state.orders.map(o => ({ reference: o.ref, date: o.date, fournisseur: getSupplier(o.supplierId)?.name || '', date_prevue: o.expectedDate, statut: o.status, lignes: (o.lines || []).length })),
@@ -5130,8 +5180,8 @@ function buildCsvDatasets() {
     scanned_receipts: (state.scannedReceipts || []).map(s => ({ date: s.date, jour: s.dayName, type: receiptTypeLabel(s.type), document: receiptDocLabel(s.docType), pages: scanPageCount(s), fichiers: scanPages(s).map(p => p.fileName).join(' | '), numerise_le: s.scannedAt })),
     receipts: state.receipts.map(r => ({ reference: r.ref, date: r.date, fournisseur: getSupplier(r.supplierId)?.name || '', commande: state.orders.find(o => o.id === r.orderId)?.ref || '', lignes: (r.lines || []).length, note: r.note })),
     movements: state.movements.map(m => ({ date: m.date, type: m.type, produit: getProduct(m.productId)?.name || '', quantite: m.qty, depuis: getZone(m.fromZoneId)?.name || '', vers: getZone(m.toZoneId)?.name || '', lot: m.batch, dlc: m.dlc, note: m.note })),
-    inventories: state.inventorySessions.flatMap(s => (s.lines || []).map(line => ({ date: s.date, jour: s.dayName, type: inventoryTypeLabel(s.type), moment: inventoryDeliveryTimingLabel(s.deliveryTiming), reference: getProduct(line.productId)?.sku || '', produit: getProduct(line.productId)?.name || '', conditionnement: getProduct(line.productId)?.packageSize || '', stock_theorique: line.expectedQty, quantite_comptee: line.countedQty, ecart: line.diff, unite: line.unit, note: line.note }))),
-    monthEnd: (state.monthEndSessions || []).flatMap(s => (s.lines || []).map(line => ({ mois: s.month, ordre_tri: line.order, reference: line.sku, produit: line.name, categorie: line.category, zone: line.zone, conditionnement: line.packageSize, ue: line.ue, su: line.su, uu: line.uu, note: line.note }))),
+    inventories: state.inventorySessions.flatMap(s => (s.lines || []).map(line => ({ date: s.date, jour: s.dayName, type: inventoryTypeLabel(s.type), moment: inventoryDeliveryTimingLabel(s.deliveryTiming), reference: getProduct(line.productId)?.sku || '', produit: getProduct(line.productId)?.name || '', conditionnement: getProduct(line.productId)?.packageSize || '', stock_theorique: line.expectedQty, quantite_comptee: line.countedQty, ecart: line.diff, unite: line.unit, note: line.note, archive_conserve_ce_mois: line.archivedKeptForMonth ? 'oui' : '' }))),
+    monthEnd: (state.monthEndSessions || []).flatMap(s => (s.lines || []).map(line => ({ mois: s.month, ordre_tri: line.order, reference: line.sku, produit: line.name, categorie: line.category, zone: line.zone, conditionnement: line.packageSize, ue: line.ue, su: line.su, uu: line.uu, note: line.note, archive_conserve_ce_mois: line.archivedKeptForMonth ? 'oui' : '' }))),
     zones: state.zones.map(z => ({ ordre: z.sequence, zone: z.name, type: z.type, temperature: z.temperature, consigne: z.description })),
     suppliers: state.suppliers.map(s => ({ fournisseur: s.name, contact: s.contact, email: s.email, telephone: s.phone, delai_jours: s.defaultDelay, note: s.note }))
   };

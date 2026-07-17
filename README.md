@@ -204,10 +204,17 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Cache GitHub Pages mis à jour en v1.43.
 
 
-## Version v1.44
+## Version v1.45
 
 - Catalogue produits adapté à l'affichage tablette et smartphone.
 - Sur tablette, le tableau est compacté pour rentrer à la bonne échelle.
 - Sur smartphone, les produits passent en cartes lisibles au lieu d'un grand tableau horizontal.
 - Les listes déroulantes Catégorie / Zone principale et la séquence restent modifiables directement dans la ligne.
-- Cache GitHub Pages mis à jour en v1.44.
+- Cache GitHub Pages mis à jour en v1.45.
+
+
+## Version 1.45
+- Archivage produit avec option de conservation uniquement dans la Fin de mois du mois en cours.
+- Les produits archivés conservés restent visibles dans Fin de mois uniquement pour le mois sélectionné correspondant.
+- Boutons dans Produits archivés pour ajouter ou retirer cette conservation temporaire.
+- Export CSV/PDF Fin de mois indique les lignes archivées conservées ce mois.
