@@ -1,4 +1,4 @@
-Version v1.47 - liens PDF dans les rapports
+Version v1.48 - backups et points de restauration
 
 # Gestion de Stock Web — version GitHub Pages + Supabase
 
@@ -15,6 +15,7 @@ Cette version est prévue pour être publiée sur GitHub Pages et synchronisée 
 - Zones de stockage avec plan de séquençage intégré
 - Fournisseurs
 - Paramètres avec changement de logo
+- Backups / points de restauration pour revenir à une sauvegarde précédente
 - Synchronisation Supabase via la table `app_data`
 
 ## Configuration Supabase

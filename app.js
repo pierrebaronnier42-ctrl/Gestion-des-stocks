@@ -1,6 +1,8 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.47.0-report-document-links';
+const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
+const BACKUP_MAX_COUNT = 12;
+const APP_VERSION = '1.48.0-backup-restore';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -623,6 +625,118 @@ function stateWithoutHeavyScanData(sourceState = state) {
   return clone;
 }
 
+
+function loadBackups() {
+  try {
+    const raw = localStorage.getItem(BACKUP_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(item => item && item.id && item.snapshot) : [];
+  } catch (error) {
+    console.warn('Lecture des backups impossible.', error);
+    return [];
+  }
+}
+
+function pruneBackups(backups = []) {
+  return backups
+    .slice()
+    .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+    .slice(0, BACKUP_MAX_COUNT);
+}
+
+function backupSnapshot(sourceState = state, light = false) {
+  const snapshot = light ? stateWithoutHeavyScanData(sourceState) : JSON.parse(JSON.stringify(sourceState));
+  snapshot.version = APP_VERSION;
+  return snapshot;
+}
+
+function backupStats(snapshot = {}) {
+  return {
+    products: (snapshot.products || []).length,
+    inventories: (snapshot.inventorySessions || []).length,
+    monthEnd: (snapshot.monthEndSessions || []).length,
+    orders: (snapshot.scannedOrders || []).length,
+    receipts: (snapshot.scannedReceipts || []).length
+  };
+}
+
+function createBackup(label = 'Sauvegarde manuelle', options = {}) {
+  const createdAt = new Date().toISOString();
+  const buildBackup = light => {
+    const snapshot = backupSnapshot(state, light);
+    return {
+      id: uid(),
+      createdAt,
+      label,
+      appVersion: APP_VERSION,
+      light: Boolean(light),
+      stats: backupStats(snapshot),
+      snapshot
+    };
+  };
+  const writeList = (backup, keepCount = BACKUP_MAX_COUNT) => {
+    const backups = pruneBackups([backup, ...loadBackups()]).slice(0, keepCount);
+    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(backups));
+  };
+  try {
+    const backup = buildBackup(false);
+    writeList(backup, BACKUP_MAX_COUNT);
+    if (!options.silent) toast('Point de restauration créé');
+    return backup;
+  } catch (error) {
+    console.warn('Backup complet impossible, tentative backup allégé.', error);
+    const backup = buildBackup(true);
+    for (const keepCount of [BACKUP_MAX_COUNT, 8, 4, 1]) {
+      try {
+        writeList(backup, keepCount);
+        if (!options.silent) toast('Backup allégé créé : les images/PDF lourds ne sont pas inclus');
+        return backup;
+      } catch (fallbackError) {
+        console.warn(`Tentative backup allégé impossible avec ${keepCount} élément(s).`, fallbackError);
+      }
+    }
+    try {
+      localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify([backup]));
+      if (!options.silent) toast('Backup allégé créé');
+      return backup;
+    } catch (lastError) {
+      console.warn('Création backup impossible.', lastError);
+      if (!options.silent) toast('Impossible de créer le backup : stockage de l’appareil saturé');
+      return null;
+    }
+  }
+}
+
+function ensureDailyAutoBackup() {
+  const todayKey = today();
+  const backups = loadBackups();
+  const exists = backups.some(backup => String(backup.createdAt || '').slice(0, 10) === todayKey && String(backup.label || '').includes('Automatique'));
+  if (!exists) createBackup(`Automatique du ${formatDateFr(todayKey)}`, { silent: true });
+}
+
+function backupRowsHtml() {
+  const backups = loadBackups();
+  if (!backups.length) return `<tr><td colspan="6" class="empty">Aucun point de restauration enregistré sur cet appareil.</td></tr>`;
+  return backups.map(backup => {
+    const stats = backup.stats || backupStats(backup.snapshot || {});
+    const dateLabel = backup.createdAt ? new Date(backup.createdAt).toLocaleString('fr-FR') : '-';
+    const detail = `${stats.products || 0} produits · ${stats.inventories || 0} inventaires · ${stats.orders || 0} BC · ${stats.receipts || 0} BL`;
+    return `
+      <tr>
+        <td><strong>${escapeHtml(dateLabel)}</strong><br><span class="muted">${escapeHtml(backup.appVersion || '')}</span></td>
+        <td>${escapeHtml(backup.label || 'Sauvegarde')}</td>
+        <td>${escapeHtml(detail)}</td>
+        <td>${backup.light ? '<span class="badge warning">Allégé</span>' : '<span class="badge success">Complet</span>'}</td>
+        <td class="actions">
+          <button class="small success" data-action="restoreBackup" data-id="${escapeHtml(backup.id)}">Restaurer</button>
+          <button class="small secondary" data-action="downloadBackup" data-id="${escapeHtml(backup.id)}">Télécharger</button>
+          <button class="small danger-soft" data-action="deleteBackup" data-id="${escapeHtml(backup.id)}">Supprimer</button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
 function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -700,6 +814,7 @@ async function syncFromCloud() {
     toast('Aucune donnée cloud trouvée.');
     return;
   }
+  createBackup('Avant chargement Supabase', { silent: true });
   isApplyingCloudState = true;
   state = normalizeState(cloudData);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -4066,6 +4181,14 @@ function renderSettings() {
         </div>
       </div>
       <div class="card wide">
+        <h3>Backups / points de restauration</h3>
+        <p class="muted">Les backups permettent de revenir à une sauvegarde précédente en cas d’erreur. Ils sont conservés sur cet appareil. Le logiciel garde les ${BACKUP_MAX_COUNT} derniers points.</p>
+        <div class="form-actions inline-actions">
+          <button data-action="createBackupNow" class="success">Créer un point de restauration</button>
+        </div>
+        <div class="table-wrap compact-table backup-table-wrap"><table><thead><tr><th>Date</th><th>Nom</th><th>Contenu</th><th>Type</th><th>Actions</th></tr></thead><tbody>${backupRowsHtml()}</tbody></table></div>
+      </div>
+      <div class="card wide">
         <h3>Lots et DLC à sortir en priorité</h3>
         <div class="table-wrap"><table><thead><tr><th>Produit</th><th>Lot</th><th>DLC</th><th>Quantité</th><th>Zone</th><th>Priorité</th></tr></thead><tbody>${renderLotRows()}</tbody></table></div>
       </div>
@@ -5137,6 +5260,41 @@ Annuler = non, il sera archivé normalement.`);
     state.settings.inventoryProjectionWeeks = Number(document.querySelector('#settingProjectionWeeks')?.value || 8);
     saveState(); render(); toast('Paramètres enregistrés');
   },
+  createBackupNow() {
+    createBackup('Sauvegarde manuelle');
+    render();
+  },
+  restoreBackup(id) {
+    const backup = loadBackups().find(item => item.id === id);
+    if (!backup) return toast('Backup introuvable');
+    const label = backup.createdAt ? new Date(backup.createdAt).toLocaleString('fr-FR') : backup.label || 'backup';
+    if (!confirm(`Restaurer le backup du ${label} ?\n\nLes données actuelles seront remplacées, mais un backup de sécurité sera créé avant la restauration.`)) return;
+    createBackup('Avant restauration', { silent: true });
+    try {
+      state = normalizeState(backup.snapshot || {});
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveState();
+      renderNav();
+      render();
+      toast('Backup restauré');
+    } catch (error) {
+      console.error(error);
+      toast('Restauration impossible');
+    }
+  },
+  downloadBackup(id) {
+    const backup = loadBackups().find(item => item.id === id);
+    if (!backup) return toast('Backup introuvable');
+    const safeDate = String(backup.createdAt || today()).slice(0, 19).replace(/[:T]/g, '-');
+    downloadBlob(new Blob([JSON.stringify({ backup: { ...backup, snapshot: undefined }, snapshot: backup.snapshot }, null, 2)], { type: 'application/json' }), `backup-stock-${safeDate}.json`);
+  },
+  deleteBackup(id) {
+    if (!confirm('Supprimer ce point de restauration ?')) return;
+    const backups = loadBackups().filter(item => item.id !== id);
+    localStorage.setItem(BACKUP_STORAGE_KEY, JSON.stringify(backups));
+    render();
+    toast('Backup supprimé');
+  },
   syncFromCloud() { syncFromCloud(); },
   syncToCloud() { syncToCloudNow(); },
   exportJson() { downloadJson(); },
@@ -5595,6 +5753,7 @@ function seedData() {
 
 function resetData() {
   if (!confirm('Tout réinitialiser ? Cette action efface les données locales.')) return;
+  createBackup('Avant réinitialisation', { silent: true });
   state = ensureInventoryCatalog(defaultState());
   orderDraft = [];
   receiptDraft = [];
@@ -5605,7 +5764,9 @@ function importJson(file) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      const data = JSON.parse(reader.result);
+      const parsed = JSON.parse(reader.result);
+      const data = parsed.snapshot || parsed.state || parsed.backup?.snapshot || parsed;
+      createBackup('Avant import JSON', { silent: true });
       state = normalizeState({ ...defaultState(), ...data, settings: { ...defaultState().settings, ...(data.settings || {}) }, scannedOrders: data.scannedOrders || [], scannedReceipts: data.scannedReceipts || [], inventorySessions: data.inventorySessions || [], monthEndSessions: data.monthEndSessions || [], products: (data.products || []).map(migrateProduct) });
       saveState(); render(); toast('Sauvegarde importée');
     } catch (error) {
@@ -5648,12 +5809,15 @@ async function initializeApp() {
       isApplyingCloudState = false;
       renderNav();
       setPage(currentPage || 'dashboard');
+      ensureDailyAutoBackup();
       toast('Données chargées depuis Supabase');
     } else {
       await saveCloudState();
+      ensureDailyAutoBackup();
       toast('Cloud Supabase initialisé');
     }
   } else {
+    ensureDailyAutoBackup();
     toast('Mode local : Supabase non configuré');
   }
 }

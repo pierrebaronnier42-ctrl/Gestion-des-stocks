@@ -983,3 +983,20 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
 .report-day-documents { margin-top: 14px; }
 .report-doc-link, .doc-pdf-link { white-space: nowrap; }
 .doc-pdf-link { color: var(--primary); font-weight: 700; text-decoration: underline; }
+
+.backup-table-wrap td {
+  vertical-align: top;
+}
+.backup-table-wrap .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+@media (max-width: 720px) {
+  .backup-table-wrap table {
+    min-width: 760px;
+  }
+  .backup-table-wrap .actions button {
+    flex: 1 1 110px;
+  }
+}
