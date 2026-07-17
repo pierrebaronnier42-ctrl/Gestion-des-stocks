@@ -227,3 +227,13 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Ajout d'un taux de modification (%) par jour pour les commandes Général et Ultra frais.
 - Ajout de la page Rapports après Fin de mois.
 - Export PDF hebdomadaire avec les trois jours de livraison, les inventaires, les BC, les BL, les tickets température et les taux de modification.
+
+
+## Version 1.49
+
+- Remise en place des icônes dans le menu des pages.
+- Ajout d’un écran de connexion par identifiant et mot de passe.
+- Deux niveaux d’accès : `300 - Responsable` et `400 - Admin`.
+- Nouvelle page `Gestion utilisateur` réservée au niveau `400 - Admin`.
+- L’Admin peut créer, supprimer des utilisateurs et modifier leurs mots de passe.
+- Au premier lancement sans utilisateur, le logiciel demande de créer le premier compte Admin.

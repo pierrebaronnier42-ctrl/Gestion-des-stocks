@@ -2,7 +2,8 @@
 const STORAGE_KEY = 'gestion-stock-web-v1';
 const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const BACKUP_MAX_COUNT = 12;
-const APP_VERSION = '1.48.0-backup-restore';
+const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
+const APP_VERSION = '1.49.0-login-users-icons';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -39,6 +40,12 @@ const RECEIPT_DOCUMENT_TYPES = [
 const INVENTORY_DAYS = [1, 3, 5]; // Lundi, mercredi, vendredi
 const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const USER_ROLES = [
+  { id: '300', label: '300 - Responsable' },
+  { id: '400', label: '400 - Admin' }
+];
+const USER_ROLE_LABELS = USER_ROLES.reduce((acc, role) => ({ ...acc, [role.id]: role.label }), {});
+
 
 const INVENTORY_DAY_KEYS = { 1: 'monday', 3: 'wednesday', 5: 'friday' };
 const INVENTORY_DAY_LABELS = { monday: 'Lundi', wednesday: 'Mercredi', friday: 'Vendredi' };
@@ -121,6 +128,7 @@ function inventoryDeliveryTimingLabel(value) {
 
 const defaultState = () => ({
   version: APP_VERSION,
+  users: [],
   products: [],
   suppliers: [],
   zones: [],
@@ -171,6 +179,202 @@ let cloudSaveTimer = null;
 let isApplyingCloudState = false;
 let lastCloudSaveAt = '';
 let reportDocumentUrlCache = new Map();
+let currentUser = loadAuthSession();
+
+function loadAuthSession() {
+  try {
+    return JSON.parse(sessionStorage.getItem(AUTH_SESSION_KEY) || 'null');
+  } catch (error) {
+    return null;
+  }
+}
+
+function saveAuthSession(user) {
+  currentUser = user ? { id: user.id, username: user.username, role: user.role } : null;
+  if (currentUser) sessionStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(currentUser));
+  else sessionStorage.removeItem(AUTH_SESSION_KEY);
+}
+
+function authUsers() {
+  return (state.users || []).filter(user => user && user.active !== false);
+}
+
+function activeAuthUser() {
+  if (!currentUser) return null;
+  return authUsers().find(user => user.id === currentUser.id || normalizeAuthUsername(user.username) === normalizeAuthUsername(currentUser.username)) || null;
+}
+
+function isAuthenticated() {
+  return Boolean(activeAuthUser());
+}
+
+function currentUserLabel() {
+  const user = activeAuthUser();
+  if (!user) return '';
+  return `${user.displayName || user.username} · ${USER_ROLE_LABELS[user.role] || user.role}`;
+}
+
+function isAdminUser() {
+  return activeAuthUser()?.role === '400';
+}
+
+function canAccessPage(pageId) {
+  if (!isAuthenticated()) return false;
+  if (pageId === 'users') return isAdminUser();
+  return true;
+}
+
+function normalizeAuthUsername(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function roleOptions(selected = '300') {
+  return USER_ROLES.map(role => `<option value="${role.id}" ${String(selected) === role.id ? 'selected' : ''}>${escapeHtml(role.label)}</option>`).join('');
+}
+
+function userExists(username, exceptId = '') {
+  const normalized = normalizeAuthUsername(username);
+  return (state.users || []).some(user => user.id !== exceptId && normalizeAuthUsername(user.username) === normalized);
+}
+
+function userRoleLabel(role) {
+  return USER_ROLE_LABELS[String(role || '300')] || '300 - Responsable';
+}
+
+function randomSalt() {
+  if (window.crypto?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  return `${uid()}-${Date.now()}`;
+}
+
+async function sha256Hex(value) {
+  if (window.crypto?.subtle && window.TextEncoder) {
+    const data = new TextEncoder().encode(value);
+    const digest = await window.crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) hash = ((hash << 5) - hash) + value.charCodeAt(i) | 0;
+  return String(hash >>> 0);
+}
+
+async function buildPasswordRecord(password) {
+  const salt = randomSalt();
+  const passwordHash = await sha256Hex(`${salt}:${password}`);
+  return { salt, passwordHash };
+}
+
+async function verifyPassword(user, password) {
+  if (!user?.salt || !user?.passwordHash) return false;
+  const hash = await sha256Hex(`${user.salt}:${password}`);
+  return hash === user.passwordHash;
+}
+
+function updateAuthBar() {
+  const bar = document.querySelector('#authbar');
+  if (!bar) return;
+  const user = activeAuthUser();
+  if (!user) {
+    bar.innerHTML = '';
+    return;
+  }
+  bar.innerHTML = `
+    <span class="auth-user">${escapeHtml(currentUserLabel())}</span>
+    <button class="small secondary" data-action="logout">Déconnexion</button>
+  `;
+}
+
+function renderAuthGate() {
+  document.body.classList.add('auth-required');
+  document.querySelector('#nav').innerHTML = '';
+  document.querySelector('#pageTitle').textContent = (state.users || []).length ? 'Connexion' : 'Création Admin';
+  updateAuthBar();
+  const app = document.querySelector('#app');
+  if (!(state.users || []).length) {
+    app.innerHTML = `
+      <div class="auth-card">
+        <p class="eyebrow">Première connexion</p>
+        <h2>Créer le compte Admin</h2>
+        <p class="muted">Ce compte aura le niveau <strong>400 - Admin</strong> et pourra créer ou supprimer les autres utilisateurs.</p>
+        <form id="initialAdminForm" class="auth-form">
+          <label>Identifiant<input name="username" autocomplete="username" required placeholder="Ex: admin" /></label>
+          <label>Nom affiché<input name="displayName" placeholder="Ex: Responsable stock" /></label>
+          <label>Mot de passe<input name="password" type="password" autocomplete="new-password" required minlength="4" /></label>
+          <label>Confirmer le mot de passe<input name="passwordConfirm" type="password" autocomplete="new-password" required minlength="4" /></label>
+          <button class="success full" type="submit">Créer l’Admin et entrer</button>
+        </form>
+      </div>
+    `;
+  } else {
+    app.innerHTML = `
+      <div class="auth-card">
+        <p class="eyebrow">Accès sécurisé</p>
+        <h2>Connexion au logiciel</h2>
+        <p class="muted">Connecte-toi avec ton identifiant et ton mot de passe.</p>
+        <form id="loginForm" class="auth-form">
+          <label>Identifiant<input name="username" autocomplete="username" required /></label>
+          <label>Mot de passe<input name="password" type="password" autocomplete="current-password" required /></label>
+          <button class="success full" type="submit">Se connecter</button>
+        </form>
+      </div>
+    `;
+  }
+  bindAuthEvents();
+}
+
+function renderAppAfterAuth() {
+  if (!isAuthenticated()) {
+    renderAuthGate();
+    return;
+  }
+  document.body.classList.remove('auth-required');
+  if (!canAccessPage(currentPage)) currentPage = 'dashboard';
+  document.querySelector('#pageTitle').textContent = pages.find(p => p.id === currentPage)?.label || '';
+  renderNav();
+  updateAuthBar();
+  render();
+}
+
+function bindAuthEvents() {
+  const loginForm = document.querySelector('#loginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(loginForm).entries());
+      const user = authUsers().find(item => normalizeAuthUsername(item.username) === normalizeAuthUsername(data.username));
+      if (!user || !(await verifyPassword(user, data.password || ''))) {
+        toast('Identifiant ou mot de passe incorrect');
+        return;
+      }
+      saveAuthSession(user);
+      renderAppAfterAuth();
+      toast('Connexion réussie');
+    });
+  }
+  const initialAdminForm = document.querySelector('#initialAdminForm');
+  if (initialAdminForm) {
+    initialAdminForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      const data = Object.fromEntries(new FormData(initialAdminForm).entries());
+      const username = String(data.username || '').trim();
+      const password = String(data.password || '');
+      if (!username) return toast('Renseigne un identifiant');
+      if (password.length < 4) return toast('Mot de passe trop court');
+      if (password !== String(data.passwordConfirm || '')) return toast('Les mots de passe ne correspondent pas');
+      const passwordRecord = await buildPasswordRecord(password);
+      const user = { id: uid(), username, displayName: String(data.displayName || username).trim(), role: '400', active: true, createdAt: new Date().toISOString(), ...passwordRecord };
+      state.users = [user];
+      saveState();
+      saveAuthSession(user);
+      renderAppAfterAuth();
+      toast('Compte Admin créé');
+    });
+  }
+}
+
 
 const pages = [
   { id: 'dashboard', label: 'Tableau de bord', icon: '📊' },
@@ -182,7 +386,8 @@ const pages = [
   { id: 'products', label: 'Produits', icon: '🏷️' },
   { id: 'zones', label: 'Zones de stockage', icon: '🗺️' },
   { id: 'suppliers', label: 'Fournisseur', icon: '🤝' },
-  { id: 'settings', label: 'Paramètres', icon: '⚙️' }
+  { id: 'settings', label: 'Paramètres', icon: '⚙️' },
+  { id: 'users', label: 'Gestion utilisateur', icon: '🔐', adminOnly: true }
 ];
 
 function normalizeScanPage(page = {}, fallback = {}, index = 0) {
@@ -229,6 +434,24 @@ function scanPageCount(scan = {}) {
   return scanPages(scan).length;
 }
 
+function migrateUser(user = {}) {
+  if (!user || typeof user !== 'object') return null;
+  const username = String(user.username || '').trim();
+  if (!username) return null;
+  const role = String(user.role || user.level || '300') === '400' ? '400' : '300';
+  return {
+    id: user.id || uid(),
+    username,
+    displayName: String(user.displayName || user.name || username).trim(),
+    role,
+    passwordHash: user.passwordHash || '',
+    salt: user.salt || '',
+    active: user.active !== false,
+    createdAt: user.createdAt || new Date().toISOString(),
+    updatedAt: user.updatedAt || ''
+  };
+}
+
 function normalizeState(input = {}) {
   const defaults = defaultState();
   const parsed = input && typeof input === 'object' ? input : {};
@@ -238,6 +461,7 @@ function normalizeState(input = {}) {
     settings: { ...defaults.settings, ...(parsed.settings || {}) },
     inventorySessions: parsed.inventorySessions || [],
     monthEndSessions: parsed.monthEndSessions || [],
+    users: (parsed.users || []).map(migrateUser).filter(Boolean),
     orderModificationRates: parsed.orderModificationRates || {},
     scannedOrders: (parsed.scannedOrders || []).map(normalizeScannedDocumentRecord),
     scannedReceipts: (parsed.scannedReceipts || []).map(normalizeScannedDocumentRecord),
@@ -881,6 +1105,14 @@ function saveLogoFile(file) {
 }
 
 function setPage(pageId) {
+  if (!isAuthenticated()) {
+    renderAuthGate();
+    return;
+  }
+  if (!canAccessPage(pageId)) {
+    toast('Accès réservé au niveau 400 - Admin');
+    pageId = 'dashboard';
+  }
   currentPage = pageId;
   if (pageId !== 'inventory') inventoryFocusMode = false;
   if (pageId === 'products') {
@@ -891,13 +1123,15 @@ function setPage(pageId) {
   currentFilter = '';
   document.querySelector('#pageTitle').textContent = pages.find(p => p.id === pageId)?.label || '';
   renderNav();
+  updateAuthBar();
   render();
 }
 
 function renderNav() {
   const nav = document.querySelector('#nav');
-  nav.innerHTML = pages.map(page => `
+  nav.innerHTML = pages.filter(page => canAccessPage(page.id)).map(page => `
     <button class="${page.id === currentPage ? 'active' : ''}" data-page="${page.id}">
+      <span class="nav-icon" aria-hidden="true">${page.icon || ''}</span>
       <span>${page.label}</span>
     </button>
   `).join('');
@@ -905,6 +1139,10 @@ function renderNav() {
 }
 
 function render() {
+  if (!isAuthenticated()) {
+    renderAuthGate();
+    return;
+  }
   const app = document.querySelector('#app');
   const map = {
     dashboard: renderDashboard,
@@ -916,10 +1154,13 @@ function render() {
     suppliers: renderSuppliers,
     monthEnd: renderMonthEnd,
     reports: renderReports,
-    settings: renderSettings
+    settings: renderSettings,
+    users: renderUsers
   };
+  if (!map[currentPage] || !canAccessPage(currentPage)) currentPage = 'dashboard';
   app.innerHTML = map[currentPage]();
   updateBrandLogo();
+  updateAuthBar();
   document.body.classList.toggle('inventory-focus', currentPage === 'inventory' && inventoryFocusMode);
   bindPageEvents();
   restoreInventoryScrollTarget();
@@ -1056,6 +1297,33 @@ function bindPageEvents() {
     input.addEventListener('input', markDirty);
     input.addEventListener('change', markDirty);
   });
+
+  const createUserForm = document.querySelector('#createUserForm');
+  if (createUserForm) {
+    createUserForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!isAdminUser()) return toast('Accès réservé au niveau 400 - Admin');
+      const data = Object.fromEntries(new FormData(createUserForm).entries());
+      const username = String(data.username || '').trim();
+      const password = String(data.password || '');
+      if (!username) return toast('Renseigne un identifiant');
+      if (userExists(username)) return toast('Cet identifiant existe déjà');
+      if (password.length < 4) return toast('Mot de passe trop court');
+      const passwordRecord = await buildPasswordRecord(password);
+      state.users.push({
+        id: uid(),
+        username,
+        displayName: String(data.displayName || username).trim(),
+        role: String(data.role || '300') === '400' ? '400' : '300',
+        active: true,
+        createdAt: new Date().toISOString(),
+        ...passwordRecord
+      });
+      saveState();
+      render();
+      toast('Utilisateur créé');
+    });
+  }
 
   const inventoryCountInputs = Array.from(document.querySelectorAll('[data-count]'));
   let lastInventoryCountFocus = null;
@@ -4140,6 +4408,59 @@ function renderReports() {
   `;
 }
 
+function renderUsers() {
+  if (!isAdminUser()) {
+    return `<div class="card"><h3>Accès réservé</h3><p class="muted">La gestion utilisateur est réservée au niveau 400 - Admin.</p></div>`;
+  }
+  const rows = (state.users || []).map(user => {
+    const isCurrent = activeAuthUser()?.id === user.id;
+    const adminCount = (state.users || []).filter(item => item.active !== false && item.role === '400').length;
+    const canDelete = !isCurrent && !(user.role === '400' && adminCount <= 1);
+    return `
+      <tr>
+        <td><strong>${escapeHtml(user.displayName || user.username)}</strong>${isCurrent ? '<br><span class="badge success">Connecté</span>' : ''}</td>
+        <td>${escapeHtml(user.username)}</td>
+        <td><span class="badge ${user.role === '400' ? 'warning' : 'info'}">${escapeHtml(userRoleLabel(user.role))}</span></td>
+        <td>${escapeHtml(user.createdAt ? new Date(user.createdAt).toLocaleString('fr-FR') : '-')}</td>
+        <td class="actions">
+          <button class="small secondary" data-action="resetUserPassword" data-id="${escapeHtml(user.id)}">Mot de passe</button>
+          <button class="small danger-soft" data-action="deleteUser" data-id="${escapeHtml(user.id)}" ${canDelete ? '' : 'disabled'}>Supprimer</button>
+        </td>
+      </tr>
+    `;
+  }).join('') || `<tr><td colspan="5" class="empty">Aucun utilisateur créé.</td></tr>`;
+  return `
+    <div class="card subpage-heading">
+      <div>
+        <p class="eyebrow">Sécurité</p>
+        <h3>Gestion utilisateur</h3>
+        <p class="muted">Le niveau 300 - Responsable accède au logiciel. Le niveau 400 - Admin accède aussi à cette page pour créer ou supprimer des comptes.</p>
+      </div>
+    </div>
+    <div class="grid two">
+      <div class="card">
+        <h3>Créer un utilisateur</h3>
+        <form id="createUserForm" class="form-grid">
+          <label>Identifiant<input name="username" autocomplete="off" required placeholder="Ex: responsable" /></label>
+          <label>Nom affiché<input name="displayName" autocomplete="off" placeholder="Ex: Responsable matin" /></label>
+          <label>Niveau<select name="role">${roleOptions('300')}</select></label>
+          <label>Mot de passe<input name="password" type="password" autocomplete="new-password" required minlength="4" /></label>
+          <div class="form-actions wide"><button class="success" type="submit">Créer l’utilisateur</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <h3>Niveaux d’accès</h3>
+        <p><strong>300 - Responsable</strong><br><span class="muted">Accès au logiciel, inventaires, commandes, réceptions, produits, rapports et paramètres.</span></p>
+        <p><strong>400 - Admin</strong><br><span class="muted">Même accès + Gestion utilisateur.</span></p>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Utilisateurs existants</h3>
+      <div class="table-wrap user-table-wrap"><table><thead><tr><th>Nom</th><th>Identifiant</th><th>Niveau</th><th>Créé le</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>
+    </div>
+  `;
+}
+
 function renderSettings() {
   return `
     <div class="grid grid-2">
@@ -4255,6 +4576,45 @@ function toast(message) {
 const formActions = html => `${html}<div class="form-actions"><button type="button" class="secondary" id="modalCancel">Annuler</button><button type="submit" class="success">Enregistrer</button></div>`;
 
 const actions = {
+  logout() {
+    saveAuthSession(null);
+    currentPage = 'dashboard';
+    renderAuthGate();
+    toast('Déconnecté');
+  },
+  deleteUser(id) {
+    if (!isAdminUser()) return toast('Accès réservé au niveau 400 - Admin');
+    const user = (state.users || []).find(item => item.id === id);
+    if (!user) return;
+    if (activeAuthUser()?.id === id) return toast('Tu ne peux pas supprimer ton propre compte connecté');
+    const adminCount = (state.users || []).filter(item => item.active !== false && item.role === '400').length;
+    if (user.role === '400' && adminCount <= 1) return toast('Il faut conserver au moins un Admin');
+    if (!confirm(`Supprimer l’utilisateur ${user.displayName || user.username} ?`)) return;
+    state.users = (state.users || []).filter(item => item.id !== id);
+    saveState();
+    render();
+    toast('Utilisateur supprimé');
+  },
+  resetUserPassword(id) {
+    if (!isAdminUser()) return toast('Accès réservé au niveau 400 - Admin');
+    const user = (state.users || []).find(item => item.id === id);
+    if (!user) return;
+    openModal('Modifier le mot de passe', formActions(`
+      <div class="form-grid">
+        <p class="wide muted">Utilisateur : <strong>${escapeHtml(user.displayName || user.username)}</strong></p>
+        <label class="wide">Nouveau mot de passe<input name="password" type="password" autocomplete="new-password" minlength="4" required /></label>
+      </div>
+    `), async fd => {
+      const password = String(fd.get('password') || '');
+      if (password.length < 4) return toast('Mot de passe trop court');
+      const passwordRecord = await buildPasswordRecord(password);
+      state.users = (state.users || []).map(item => item.id === id ? { ...item, ...passwordRecord, updatedAt: new Date().toISOString() } : item);
+      saveState();
+      closeModal();
+      render();
+      toast('Mot de passe mis à jour');
+    });
+  },
   openProduct(id) {
     const p = id ? getProduct(id) : {};
     const supplierOptions = ['<option value="">Aucun</option>'].concat(state.suppliers.map(s => `<option value="${s.id}" ${p.supplierId === s.id ? 'selected' : ''}>${escapeHtml(s.name)}</option>`)).join('');
@@ -5798,8 +6158,6 @@ if ('serviceWorker' in navigator) {
 }
 
 async function initializeApp() {
-  renderNav();
-  setPage('dashboard');
   if (initSupabaseClient()) {
     const cloudData = await loadCloudState();
     if (cloudData) {
@@ -5807,16 +6165,17 @@ async function initializeApp() {
       state = normalizeState(cloudData);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       isApplyingCloudState = false;
-      renderNav();
-      setPage(currentPage || 'dashboard');
+      renderAppAfterAuth();
       ensureDailyAutoBackup();
       toast('Données chargées depuis Supabase');
     } else {
+      renderAppAfterAuth();
       await saveCloudState();
       ensureDailyAutoBackup();
       toast('Cloud Supabase initialisé');
     }
   } else {
+    renderAppAfterAuth();
     ensureDailyAutoBackup();
     toast('Mode local : Supabase non configuré');
   }
