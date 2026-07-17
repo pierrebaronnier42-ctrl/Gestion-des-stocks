@@ -979,3 +979,7 @@ textarea#importInventoryText, #inventoryImportText { width: 100%; min-height: 16
     width: 100px;
   }
 }
+
+.report-day-documents { margin-top: 14px; }
+.report-doc-link, .doc-pdf-link { white-space: nowrap; }
+.doc-pdf-link { color: var(--primary); font-weight: 700; text-decoration: underline; }

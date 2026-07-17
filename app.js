@@ -1,6 +1,6 @@
 /* Gestion Stock Web - version locale prête à héberger */
 const STORAGE_KEY = 'gestion-stock-web-v1';
-const APP_VERSION = '1.46.0-weekly-reports-order-rates';
+const APP_VERSION = '1.47.0-report-document-links';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -168,6 +168,7 @@ let cloudReady = false;
 let cloudSaveTimer = null;
 let isApplyingCloudState = false;
 let lastCloudSaveAt = '';
+let reportDocumentUrlCache = new Map();
 
 const pages = [
   { id: 'dashboard', label: 'Tableau de bord', icon: '📊' },
@@ -2846,11 +2847,49 @@ function downloadDataUrl(dataUrl, filename) {
   a.remove();
 }
 
+function existingPdfPage(scan) {
+  return scanPages(scan || {}).find(page => String(page.fileType || '').includes('pdf') && String(page.fileData || '').startsWith('data:application/pdf'));
+}
+
+async function getScanPdfUrl(scan, kind, title) {
+  if (!scan) return '';
+  const existingPdf = existingPdfPage(scan);
+  if (existingPdf) return existingPdf.fileData;
+  const pages = scanPages(scan);
+  const imagePages = pages.filter(isImageScanPage);
+  if (!imagePages.length) return '';
+  const cacheKey = `${kind}:${scan.id}:${scan.scannedAt || ''}:${pages.length}:${pages.map(page => `${page.id || ''}:${page.editedAt || page.scannedAt || ''}`).join(',')}`;
+  if (reportDocumentUrlCache.has(cacheKey)) return reportDocumentUrlCache.get(cacheKey);
+  const blob = await createMultiPagePdfBlob(scan, title);
+  const url = URL.createObjectURL(blob);
+  reportDocumentUrlCache.set(cacheKey, url);
+  return url;
+}
+
+async function openScanPdf(scan, kind, title) {
+  if (!scan) return toast('Document introuvable');
+  try {
+    toast('Ouverture du PDF…');
+    const url = await getScanPdfUrl(scan, kind, title);
+    if (!url) return toast('Aucun PDF disponible pour ce document');
+    const opened = window.open(url, '_blank');
+    if (!opened) {
+      const existingPdf = existingPdfPage(scan);
+      if (existingPdf) downloadDataUrl(existingPdf.fileData, scanPdfFileName(scan, kind));
+      else downloadBlob(await createMultiPagePdfBlob(scan, title), scanPdfFileName(scan, kind));
+      toast('Popup bloquée : le PDF a été téléchargé à la place.');
+    }
+  } catch (error) {
+    console.error(error);
+    toast('Impossible d’ouvrir le PDF du document.');
+  }
+}
+
 async function downloadScanAsPdf(scan, kind, title) {
   if (!scan) return toast('Document introuvable');
   const pages = scanPages(scan);
   const imagePages = pages.filter(isImageScanPage);
-  const existingPdf = pages.find(page => String(page.fileType || '').includes('pdf') && String(page.fileData || '').startsWith('data:application/pdf'));
+  const existingPdf = existingPdfPage(scan);
   if (!imagePages.length && existingPdf) {
     downloadDataUrl(existingPdf.fileData, scanPdfFileName(scan, kind));
     return;
@@ -3960,6 +3999,7 @@ function renderReports() {
       <td>${escapeHtml(row.rateLabel)}</td>
     </tr>
   `).join('');
+  const linkedDocuments = dates.map(date => weeklyReportLinkedDocumentsHtml(date)).join('');
 
   return `
     <div class="card subpage-heading">
@@ -3978,7 +4018,9 @@ function renderReports() {
     <div class="card" style="margin-top:18px;">
       <div class="toolbar"><h3>Aperçu de la semaine</h3><span class="muted">${escapeHtml(formatDateFr(dates[0]))} au ${escapeHtml(formatDateFr(dates[2]))}</span></div>
       <div class="table-wrap report-summary-wrap"><table><thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead><tbody>${summaryRows}</tbody></table></div>
-      <p class="muted">Les documents numérisés en photo seront intégrés visuellement au PDF. Les fichiers PDF importés sont listés dans le rapport, puis restent téléchargeables depuis leurs pages BC/BL.</p>
+      <h3>Documents liés</h3>
+      <p class="muted">Chaque document présent possède maintenant un lien qui ouvre directement son PDF.</p>
+      ${linkedDocuments}
     </div>
   `;
 }
@@ -4501,6 +4543,11 @@ Annuler = non, il sera archivé normalement.`);
     const title = scan ? `Bon de commande ${orderTypeLabel(scan.type)} ${formatDateFr(scan.date)}` : 'Bon de commande';
     return downloadScanAsPdf(scan, 'order', title);
   },
+  openScannedOrderPdf(id) {
+    const scan = (state.scannedOrders || []).find(x => x.id === id);
+    const title = scan ? `Bon de commande ${orderTypeLabel(scan.type)} ${formatDateFr(scan.date)}` : 'Bon de commande';
+    return openScanPdf(scan, 'order', title);
+  },
   async autoCropAllOrderPages(id) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
     if (!scan) return toast('Bon de commande introuvable');
@@ -4620,6 +4667,12 @@ Annuler = non, il sera archivé normalement.`);
     const scanTypeLabel = scan?.docType === 'temperature' ? 'livraison complète' : receiptTypeLabel(scan?.type);
     const title = scan ? `${receiptDocLabel(scan.docType)} ${scanTypeLabel} ${formatDateFr(scan.date)}` : 'Document de livraison';
     return downloadScanAsPdf(scan, 'receipt', title);
+  },
+  openScannedReceiptPdf(id) {
+    const scan = (state.scannedReceipts || []).find(x => x.id === id);
+    const scanTypeLabel = scan?.docType === 'temperature' ? 'livraison complète' : receiptTypeLabel(scan?.type);
+    const title = scan ? `${receiptDocLabel(scan.docType)} ${scanTypeLabel} ${formatDateFr(scan.date)}` : 'Document de livraison';
+    return openScanPdf(scan, 'receipt', title);
   },
   async autoCropAllReceiptPages(id) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);
@@ -5087,10 +5140,10 @@ Annuler = non, il sera archivé normalement.`);
   syncFromCloud() { syncFromCloud(); },
   syncToCloud() { syncToCloudNow(); },
   exportJson() { downloadJson(); },
-  exportWeeklyReportPdf() {
+  async exportWeeklyReportPdf() {
     const weekStart = startOfWeekInput(document.querySelector('[data-report-week]')?.value || selectedReportWeek || today());
     selectedReportWeek = weekStart;
-    printWeeklyReportPdf(weekStart);
+    await printWeeklyReportPdf(weekStart);
   },
   exportCsv(_id, type) { downloadCsv(type || _id); }
 };
@@ -5316,37 +5369,80 @@ function weeklyReportInventorySectionHtml(date) {
 
 function weeklyReportScansForDate(date) {
   const docs = [];
-  inventoryTypesForDate(date).forEach(type => docs.push({ label: `BC ${orderTypeLabel(type)}`, scan: getScannedOrder(date, type) }));
-  receiptTypesForDate(date).forEach(type => docs.push({ label: `BL ${receiptTypeLabel(type)}`, scan: getScannedReceipt(date, type, 'delivery') }));
-  docs.push({ label: 'Ticket température', scan: getScannedReceipt(date, 'delivery', 'temperature') });
+  inventoryTypesForDate(date).forEach(type => docs.push({ kind: 'order', label: `BC ${orderTypeLabel(type)}`, scan: getScannedOrder(date, type) }));
+  receiptTypesForDate(date).forEach(type => docs.push({ kind: 'receipt', label: `BL ${receiptTypeLabel(type)}`, scan: getScannedReceipt(date, type, 'delivery') }));
+  docs.push({ kind: 'receipt', label: 'Ticket température', scan: getScannedReceipt(date, 'delivery', 'temperature') });
   return docs;
 }
 
-function weeklyReportDocumentSummaryHtml(date) {
+function weeklyReportDocumentActionHtml(item, linkMap = null) {
+  if (!item.scan) return '<span class="muted">-</span>';
+  const fileName = scanPdfFileName(item.scan, item.kind || 'document');
+  const href = linkMap?.[item.scan.id] || '';
+  if (href) {
+    return `<a class="doc-pdf-link" href="${escapeHtml(href)}" target="_blank" download="${escapeHtml(fileName)}">Ouvrir PDF</a>`;
+  }
+  const action = item.kind === 'order' ? 'openScannedOrderPdf' : 'openScannedReceiptPdf';
+  return `<button type="button" class="small secondary report-doc-link" data-action="${action}" data-id="${escapeHtml(item.scan.id)}">Ouvrir PDF</button>`;
+}
+
+function weeklyReportDocumentSummaryHtml(date, linkMap = null) {
   return weeklyReportScansForDate(date).map(item => {
     const pages = scanPages(item.scan || {});
-    return `<tr><td>${escapeHtml(item.label)}</td><td>${item.scan ? 'Présent' : 'Manquant'}</td><td>${pages.length || '-'}</td><td>${escapeHtml(pages.map(page => page.fileName || '').filter(Boolean).join(' | ') || '-')}</td></tr>`;
+    return `<tr><td>${escapeHtml(item.label)}</td><td>${item.scan ? 'Présent' : 'Manquant'}</td><td>${pages.length || '-'}</td><td>${escapeHtml(pages.map(page => page.fileName || '').filter(Boolean).join(' | ') || '-')}</td><td>${weeklyReportDocumentActionHtml(item, linkMap)}</td></tr>`;
   }).join('');
 }
 
-function weeklyReportDocumentPagesHtml(date) {
+function weeklyReportLinkedDocumentsHtml(date) {
+  return `
+    <div class="report-day-documents">
+      <h4>${escapeHtml(dayNames[parseDate(date).getDay()])} ${escapeHtml(formatDateFr(date))}</h4>
+      <div class="table-wrap compact-table"><table><thead><tr><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${weeklyReportDocumentSummaryHtml(date)}</tbody></table></div>
+    </div>
+  `;
+}
+
+function weeklyReportDocumentPagesHtml(date, linkMap = null) {
   return weeklyReportScansForDate(date).map(item => {
     if (!item.scan) return `<div class="doc-block missing"><strong>${escapeHtml(item.label)}</strong><br>Document manquant.</div>`;
     const pages = scanPages(item.scan);
+    const docLink = weeklyReportDocumentActionHtml(item, linkMap);
     if (!pages.length) return `<div class="doc-block missing"><strong>${escapeHtml(item.label)}</strong><br>Aucune page conservée.</div>`;
     return pages.map((page, index) => {
       const title = `${item.label} · page ${index + 1}/${pages.length}`;
       if (isImageScanPage(page)) {
-        return `<div class="doc-page"><div class="doc-title">${escapeHtml(title)}</div><img src="${escapeHtml(page.fileData)}" alt="${escapeHtml(title)}" /></div>`;
+        return `<div class="doc-page"><div class="doc-title">${escapeHtml(title)} <span class="doc-title-link">${docLink}</span></div><img src="${escapeHtml(page.fileData)}" alt="${escapeHtml(title)}" /></div>`;
       }
-      return `<div class="doc-block"><strong>${escapeHtml(title)}</strong><br>Fichier importé : ${escapeHtml(page.fileName || 'document PDF')}<br><span>Le fichier PDF reste consultable depuis la page d’origine.</span></div>`;
+      return `<div class="doc-block"><strong>${escapeHtml(title)}</strong><br>Fichier importé : ${escapeHtml(page.fileName || 'document PDF')}<br>${docLink}</div>`;
     }).join('');
   }).join('');
 }
 
-function printWeeklyReportPdf(weekStart) {
+async function buildWeeklyReportLinkMap(dates) {
+  const map = {};
+  const unique = new Map();
+  dates.forEach(date => weeklyReportScansForDate(date).forEach(item => {
+    if (item.scan?.id) unique.set(item.scan.id, item);
+  }));
+  for (const item of unique.values()) {
+    try {
+      const title = item.kind === 'order'
+        ? `Bon de commande ${orderTypeLabel(item.scan.type)} ${formatDateFr(item.scan.date)}`
+        : `${receiptDocLabel(item.scan.docType)} ${item.scan.docType === 'temperature' ? 'livraison complète' : receiptTypeLabel(item.scan.type)} ${formatDateFr(item.scan.date)}`;
+      const url = await getScanPdfUrl(item.scan, item.kind, title);
+      if (url) map[item.scan.id] = url;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  return map;
+}
+
+async function printWeeklyReportPdf(weekStart) {
   const normalizedWeekStart = startOfWeekInput(weekStart || today());
   const dates = weekDeliveryDates(normalizedWeekStart);
+  toast('Préparation des liens PDF…');
+  const linkMap = await buildWeeklyReportLinkMap(dates);
   const printedAt = new Date().toLocaleString('fr-FR');
   const title = `Rapport hebdomadaire - semaine du ${formatDateFr(normalizedWeekStart)}`;
   const summaryRows = dates.map(date => weeklyReportDaySummary(date)).map(row => `
@@ -5367,8 +5463,8 @@ function printWeeklyReportPdf(weekStart) {
       <h3>Inventaires</h3>
       ${weeklyReportInventorySectionHtml(date)}
       <h3>Documents BC / BL / ticket température</h3>
-      <table class="compact-table"><thead><tr><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th></tr></thead><tbody>${weeklyReportDocumentSummaryHtml(date)}</tbody></table>
-      <div class="document-pages">${weeklyReportDocumentPagesHtml(date)}</div>
+      <table class="compact-table"><thead><tr><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${weeklyReportDocumentSummaryHtml(date, linkMap)}</tbody></table>
+      <div class="document-pages">${weeklyReportDocumentPagesHtml(date, linkMap)}</div>
     </section>
   `).join('');
   const html = `<!doctype html>
@@ -5398,6 +5494,8 @@ function printWeeklyReportPdf(weekStart) {
     .doc-page { page-break-inside: avoid; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; margin-top: 8px; }
     .doc-page img { display: block; max-width: 100%; max-height: 245mm; margin: 4px auto 0; object-fit: contain; }
     .doc-title { font-weight: 700; margin-bottom: 4px; }
+    .doc-title-link { float: right; font-weight: 400; }
+    .doc-pdf-link { color: #1d4ed8; font-weight: 700; text-decoration: underline; }
     .doc-block { border: 1px dashed #9ca3af; border-radius: 8px; padding: 8px; margin-top: 8px; background: #f9fafb; }
     .missing { color: #92400e; background: #fffbeb; }
     footer { margin-top: 8px; font-size: 10px; color: #6b7280; }

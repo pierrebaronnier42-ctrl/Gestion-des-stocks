@@ -1,3 +1,5 @@
+Version v1.47 - liens PDF dans les rapports
+
 # Gestion de Stock Web — version GitHub Pages + Supabase
 
 Cette version est prévue pour être publiée sur GitHub Pages et synchronisée avec Supabase.
