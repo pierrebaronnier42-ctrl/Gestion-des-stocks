@@ -248,7 +248,20 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Correction Supabase : connexion REST directe sans dépendre du CDN Supabase.
 - Ajout du bouton Tester la connexion Supabase dans Paramètres.
 
-## Version 1.52
+## Version 1.54
 
 - Ajout dans Commande d’un bloc pour renseigner ou corriger le taux de modification Général / Ultra frais sur une date passée.
 - Les rapports hebdomadaires récupèrent automatiquement ces taux ajoutés après coup.
+
+
+## Version 1.54
+- Démarrage silencieux si Supabase est temporairement indisponible.
+- L’écran d’authentification reste utilisable en mode local sans message bloquant.
+- Sauvegarde locale allégée automatique si les documents numérisés sont trop volumineux pour le stockage du téléphone/tablette.
+
+## Version 1.54 - Connexion automatique Supabase
+
+- La connexion Supabase se lance automatiquement au démarrage.
+- Si le cloud est indisponible, le logiciel démarre en local puis réessaie automatiquement.
+- Reconnexion automatique au retour réseau et au retour sur l’onglet.
+- Ajout d’un bouton `Connexion automatique maintenant` dans Paramètres.

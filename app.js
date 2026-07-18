@@ -2,9 +2,10 @@
 window.__GESTION_STOCK_APP_JS_LOADED = true;
 const STORAGE_KEY = 'gestion-stock-web-v1';
 const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
+const CLOUD_META_STORAGE_KEY = 'gestion-stock-web-v1-cloud-meta';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.52.0-manual-order-rate-past-date';
+const APP_VERSION = '1.54.0-auto-supabase-connection';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -177,8 +178,13 @@ let inventoryPdfImportDraft = { status: 'idle', slot: '', fileName: '', lines: [
 let pendingInventoryScrollTarget = null;
 let cloudReady = false;
 let cloudSaveTimer = null;
+let cloudAutoConnectTimer = null;
+let cloudAutoConnectStarted = false;
+let cloudAutoConnectInFlight = false;
 let isApplyingCloudState = false;
 let lastCloudSaveAt = '';
+let lastCloudUpdatedAt = '';
+let lastCloudError = '';
 let reportDocumentUrlCache = new Map();
 let currentUser = loadAuthSession();
 
@@ -962,17 +968,24 @@ function backupRowsHtml() {
   }).join('');
 }
 
-function saveState() {
+function saveStateLocalOnly(sourceState = state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sourceState));
+    return { ok: true, light: false };
   } catch (error) {
     console.warn('Stockage local saturé par les documents numérisés : sauvegarde locale allégée utilisée.', error);
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateWithoutHeavyScanData(state)));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(stateWithoutHeavyScanData(sourceState)));
+      return { ok: true, light: true };
     } catch (fallbackError) {
       console.warn('Sauvegarde locale allégée impossible.', fallbackError);
+      return { ok: false, light: true, error: fallbackError };
     }
   }
+}
+
+function saveState() {
+  saveStateLocalOnly(state);
   scheduleCloudSave();
 }
 
@@ -1044,7 +1057,31 @@ function scheduleCloudSave() {
   cloudSaveTimer = setTimeout(() => saveCloudState(), 900);
 }
 
-async function saveCloudState() {
+function loadCloudMeta() {
+  try {
+    return JSON.parse(localStorage.getItem(CLOUD_META_STORAGE_KEY) || '{}') || {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveCloudMeta(meta = {}) {
+  const merged = { ...loadCloudMeta(), ...meta };
+  try {
+    localStorage.setItem(CLOUD_META_STORAGE_KEY, JSON.stringify(merged));
+  } catch (error) {
+    console.warn('Métadonnées Supabase non sauvegardées.', error);
+  }
+  return merged;
+}
+
+function applyCloudMeta(updatedAt = '') {
+  if (!updatedAt) return;
+  lastCloudUpdatedAt = updatedAt;
+  saveCloudMeta({ updatedAt, loadedAt: new Date().toISOString() });
+}
+
+async function saveCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return;
   try {
     const payload = {
@@ -1058,26 +1095,114 @@ async function saveCloudState() {
       body: JSON.stringify(payload)
     });
     lastCloudSaveAt = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    lastCloudUpdatedAt = payload.updated_at;
+    saveCloudMeta({ updatedAt: payload.updated_at, savedAt: payload.updated_at, loadedAt: payload.updated_at });
+    lastCloudError = '';
   } catch (error) {
     console.error('Erreur sauvegarde Supabase', error);
-    toast(`Sauvegarde cloud impossible : ${error.message || 'vérifie Supabase/RLS'}`);
+    lastCloudError = error.message || 'vérifie Supabase/RLS';
+    if (!options.silent) toast(`Sauvegarde cloud impossible : ${lastCloudError}`);
   }
 }
 
-async function loadCloudState() {
+async function loadCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return null;
   try {
     const rows = await supabaseRequest(`${CLOUD_TABLE}?select=data,updated_at&id=eq.${encodeURIComponent(CLOUD_RECORD_ID)}&limit=1`, {
       method: 'GET',
       headers: { Accept: 'application/json' }
     });
+    lastCloudError = '';
     const row = Array.isArray(rows) ? rows[0] : null;
+    lastCloudUpdatedAt = row?.updated_at || '';
     return row?.data || null;
   } catch (error) {
     console.error('Erreur chargement Supabase', error);
-    toast(`Chargement cloud impossible : ${error.message || 'données locales utilisées'}`);
+    lastCloudError = error.message || 'données locales utilisées';
+    if (!options.silent) toast(`Chargement cloud impossible : ${lastCloudError}`);
     return null;
   }
+}
+
+function shouldApplyCloudStateAutomatically(cloudData, options = {}) {
+  if (!cloudData) return false;
+  if (options.force) return true;
+  const localUsers = (state.users || []).length;
+  const cloudUsers = (cloudData.users || []).length;
+  if (!localUsers && cloudUsers) return true;
+  const meta = loadCloudMeta();
+  const cloudTime = Date.parse(lastCloudUpdatedAt || '');
+  const localKnownCloudTime = Date.parse(meta.updatedAt || meta.loadedAt || '');
+  if (cloudTime && (!localKnownCloudTime || cloudTime > localKnownCloudTime + 1000)) return true;
+  return false;
+}
+
+function applyCloudState(cloudData, options = {}) {
+  if (!cloudData) return false;
+  if (options.backupLocal) createBackup('Avant connexion automatique Supabase', { silent: true });
+  isApplyingCloudState = true;
+  state = normalizeState(cloudData);
+  const localSave = saveStateLocalOnly(state);
+  isApplyingCloudState = false;
+  applyCloudMeta(lastCloudUpdatedAt);
+  renderAppAfterAuth();
+  ensureDailyAutoBackup();
+  if (localSave.light) console.warn('Sauvegarde locale allégée : documents numérisés trop volumineux pour cet appareil.');
+  return true;
+}
+
+async function autoConnectSupabase(options = {}) {
+  if (cloudAutoConnectInFlight) return cloudReady && !lastCloudError;
+  cloudAutoConnectInFlight = true;
+  try {
+    if (!initSupabaseClient()) throw new Error('Configuration Supabase introuvable');
+    const cloudData = await loadCloudState({ silent: true });
+    if (cloudData) {
+      const applied = shouldApplyCloudStateAutomatically(cloudData, options) ? applyCloudState(cloudData, { backupLocal: Boolean((state.users || []).length) }) : false;
+      cloudReady = true;
+      lastCloudError = '';
+      if (!applied) {
+        await saveCloudState({ silent: true });
+        if (currentPage === 'settings') render();
+      }
+      if (!options.silent) toast(applied ? 'Connexion Supabase automatique OK. Données cloud chargées.' : 'Connexion Supabase automatique OK.');
+    } else {
+      cloudReady = true;
+      lastCloudError = '';
+      await saveCloudState({ silent: true });
+      if (currentPage === 'settings') render();
+      if (!options.silent) toast('Connexion Supabase automatique OK. Sauvegarde cloud créée.');
+    }
+    clearTimeout(cloudAutoConnectTimer);
+    cloudAutoConnectTimer = null;
+    return true;
+  } catch (error) {
+    console.warn('Connexion automatique Supabase impossible.', error);
+    cloudReady = false;
+    lastCloudError = error.message || 'connexion automatique en attente';
+    if (currentPage === 'settings') render();
+    return false;
+  } finally {
+    cloudAutoConnectInFlight = false;
+  }
+}
+
+function scheduleAutomaticSupabaseConnection(delay = 15000) {
+  clearTimeout(cloudAutoConnectTimer);
+  cloudAutoConnectTimer = setTimeout(async () => {
+    const ok = await autoConnectSupabase({ silent: true });
+    if (!ok) scheduleAutomaticSupabaseConnection(Math.min(delay * 1.5, 120000));
+  }, delay);
+}
+
+function startAutomaticSupabaseConnection() {
+  if (cloudAutoConnectStarted) return;
+  cloudAutoConnectStarted = true;
+  window.addEventListener('online', () => autoConnectSupabase({ silent: true, force: !(state.users || []).length }));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && (!cloudReady || lastCloudError)) autoConnectSupabase({ silent: true, force: !(state.users || []).length });
+  });
+  if (!cloudReady || lastCloudError) scheduleAutomaticSupabaseConnection(5000);
 }
 
 async function testSupabaseConnection() {
@@ -1092,10 +1217,12 @@ async function testSupabaseConnection() {
       headers: { Accept: 'application/json' }
     });
     cloudReady = true;
+    lastCloudError = '';
     toast('Connexion Supabase OK.');
   } catch (error) {
     console.error('Test Supabase impossible', error);
-    toast(`Supabase répond mais refuse la connexion : ${error.message || 'vérifie table app_data/RLS'}`);
+    lastCloudError = error.message || 'vérifie table app_data/RLS';
+    toast(`Supabase répond mais refuse la connexion : ${lastCloudError}`);
   }
   render();
 }
@@ -1106,19 +1233,14 @@ async function syncFromCloud() {
     toast('Aucune donnée cloud trouvée.');
     return;
   }
-  createBackup('Avant chargement Supabase', { silent: true });
-  isApplyingCloudState = true;
-  state = normalizeState(cloudData);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  isApplyingCloudState = false;
-  renderNav();
-  render();
+  applyCloudState(cloudData, { backupLocal: true });
   toast('Données cloud chargées.');
 }
 
 async function syncToCloudNow() {
+  if (!cloudReady) initSupabaseClient();
   await saveCloudState();
-  toast('Données envoyées vers Supabase.');
+  if (!lastCloudError) toast('Données envoyées vers Supabase.');
 }
 
 function updateBrandLogo() {
@@ -4587,12 +4709,13 @@ function renderSettings() {
       </div>
       <div class="card">
         <h3>Sauvegarde / transfert</h3>
-        <p class="muted">Cette version est connectée à Supabase. Les données sont aussi gardées localement en secours sur l’appareil.</p>
-        <div class="cloud-status ${cloudReady ? 'success' : 'warning'}">
-          <strong>${cloudReady ? 'Cloud Supabase actif' : 'Cloud Supabase non connecté'}</strong>
-          <span>${cloudReady ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')}` : 'Vérifie le fichier supabase-config.js et la table app_data.'}</span>
+        <p class="muted">La connexion Supabase est automatique : au démarrage, au retour réseau et au retour sur l’onglet. Les données restent aussi gardées localement en secours sur l’appareil.</p>
+        <div class="cloud-status ${cloudReady && !lastCloudError ? 'success' : 'warning'}">
+          <strong>${cloudReady && !lastCloudError ? 'Cloud Supabase connecté automatiquement' : 'Connexion Supabase automatique en attente'}</strong>
+          <span>${cloudReady && !lastCloudError ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')} ${lastCloudUpdatedAt ? `· Cloud : ${escapeHtml(new Date(lastCloudUpdatedAt).toLocaleString('fr-FR'))}` : ''}` : `Le logiciel fonctionne en local et réessaie automatiquement. ${lastCloudError ? `Détail : ${escapeHtml(lastCloudError)}` : 'Tu peux aussi tester manuellement.'}`}</span>
         </div>
         <div class="grid">
+          <button data-action="autoConnectSupabase" class="success">Connexion automatique maintenant</button>
           <button data-action="testSupabase" class="secondary">Tester la connexion Supabase</button>
           <button data-action="syncFromCloud" class="secondary">Charger depuis Supabase</button>
           <button data-action="syncToCloud" class="success">Envoyer vers Supabase</button>
@@ -5765,6 +5888,7 @@ Annuler = non, il sera archivé normalement.`);
     toast('Backup supprimé');
   },
   testSupabase() { testSupabaseConnection(); },
+  autoConnectSupabase() { autoConnectSupabase({ silent: false, force: false }); },
   syncFromCloud() { syncFromCloud(); },
   syncToCloud() { syncToCloudNow(); },
   exportJson() { downloadJson(); },
@@ -6269,26 +6393,20 @@ if ('serviceWorker' in navigator) {
 
 async function initializeApp() {
   if (initSupabaseClient()) {
-    const cloudData = await loadCloudState();
+    const cloudData = await loadCloudState({ silent: true });
     if (cloudData) {
-      isApplyingCloudState = true;
-      state = normalizeState(cloudData);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-      isApplyingCloudState = false;
-      renderAppAfterAuth();
-      ensureDailyAutoBackup();
-      toast('Données chargées depuis Supabase');
+      applyCloudState(cloudData, { backupLocal: false });
     } else {
       renderAppAfterAuth();
-      await saveCloudState();
       ensureDailyAutoBackup();
-      toast('Cloud Supabase initialisé');
+      if (!lastCloudError) await saveCloudState({ silent: true });
     }
   } else {
+    lastCloudError = 'Configuration Supabase introuvable';
     renderAppAfterAuth();
     ensureDailyAutoBackup();
-    toast('Mode local : Supabase non configuré');
   }
+  startAutomaticSupabaseConnection();
 }
 
 initializeApp()
@@ -6297,9 +6415,10 @@ initializeApp()
     console.error('Démarrage impossible', error);
     window.__GESTION_STOCK_APP_ERROR = error;
     try {
+      lastCloudError = error.message || 'Démarrage cloud impossible';
       cloudReady = false;
       renderAppAfterAuth();
-      toast('Démarrage cloud impossible. Mode local chargé.');
+      startAutomaticSupabaseConnection();
       window.__GESTION_STOCK_APP_READY = true;
     } catch (fallbackError) {
       console.error('Démarrage local impossible', fallbackError);
