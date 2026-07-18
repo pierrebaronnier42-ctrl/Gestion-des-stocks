@@ -4,7 +4,7 @@ const STORAGE_KEY = 'gestion-stock-web-v1';
 const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.51.0-supabase-rest-fix';
+const APP_VERSION = '1.52.0-manual-order-rate-past-date';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -1343,6 +1343,19 @@ function bindPageEvents() {
       selectedReportWeek = startOfWeekInput(event.target.value || today());
       render();
     });
+  }
+
+  const manualOrderRateDate = document.querySelector('#manualOrderRateDate');
+  if (manualOrderRateDate) {
+    const refreshManualOrderRateInputs = () => {
+      const date = manualOrderRateDate.value || today();
+      const generalInput = document.querySelector('#manualOrderRateGeneral');
+      const ultraInput = document.querySelector('#manualOrderRateUltra');
+      if (generalInput) generalInput.value = getOrderModificationRate(date, 'general');
+      if (ultraInput) ultraInput.value = getOrderModificationRate(date, 'ultra');
+    };
+    manualOrderRateDate.addEventListener('change', refreshManualOrderRateInputs);
+    manualOrderRateDate.addEventListener('input', refreshManualOrderRateInputs);
   }
 
   document.querySelectorAll('[data-order-modification-rate]').forEach(input => {
@@ -4004,6 +4017,23 @@ function renderOrders() {
     <div class="card" style="margin-top:18px;">
       <div class="toolbar">
         <div>
+          <p class="eyebrow">Taux manquant</p>
+          <h3>Ajouter un taux de modification sur une date passée</h3>
+          <p class="muted">Utilise cette zone quand un taux Général ou Ultra frais n’a pas été renseigné le jour de la commande. Les rapports hebdomadaires utiliseront automatiquement ces valeurs.</p>
+        </div>
+      </div>
+      <div class="form-grid compact-grid">
+        <label>Date de commande<input id="manualOrderRateDate" type="date" value="${today()}" /></label>
+        <label>Général %<input id="manualOrderRateGeneral" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(getOrderModificationRate(today(), 'general'))}" placeholder="Ex: 12,5" /></label>
+        <label>Ultra frais %<input id="manualOrderRateUltra" type="number" step="0.01" inputmode="decimal" value="${escapeHtml(getOrderModificationRate(today(), 'ultra'))}" placeholder="Ex: 8" /></label>
+        <label>Enregistrer<button type="button" class="success full" data-action="saveManualOrderModificationRates">Sauvegarder les taux</button></label>
+      </div>
+      <p class="muted small-note">Laisse une case vide pour supprimer le taux enregistré sur cette date et ce type.</p>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="toolbar">
+        <div>
           <p class="eyebrow">Prévisionnel</p>
           <h3>Dates des commandes</h3>
           <p class="muted">Planning automatique lundi / mercredi / vendredi, avec Général, Ultra frais et HUB une semaine sur deux. Renseigne aussi le taux de modification des commandes Général et Ultra frais.</p>
@@ -5038,6 +5068,16 @@ Annuler = non, il sera archivé normalement.`);
     if (!session) return toast('Inventaire fin de mois introuvable');
     const rows = (session.lines || []).slice().sort((a, b) => Number(a.order || 999999) - Number(b.order || 999999));
     printMonthEndPdf(monthEndPdfTitle(session.month), rows, 'Inventaire fin de mois enregistré');
+  },
+  saveManualOrderModificationRates() {
+    const date = document.querySelector('#manualOrderRateDate')?.value || today();
+    const general = document.querySelector('#manualOrderRateGeneral')?.value ?? '';
+    const ultra = document.querySelector('#manualOrderRateUltra')?.value ?? '';
+    setOrderModificationRate(date, 'general', general);
+    setOrderModificationRate(date, 'ultra', ultra);
+    saveState();
+    render();
+    toast(`Taux de modification enregistrés pour le ${formatDateFr(date)}`);
   },
   triggerOrderScan(date, type) {
     if (!date || !type) return toast('Choisis une date et un type de commande');

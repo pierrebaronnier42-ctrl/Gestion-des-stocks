@@ -247,3 +247,8 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 
 - Correction Supabase : connexion REST directe sans dépendre du CDN Supabase.
 - Ajout du bouton Tester la connexion Supabase dans Paramètres.
+
+## Version 1.52
+
+- Ajout dans Commande d’un bloc pour renseigner ou corriger le taux de modification Général / Ultra frais sur une date passée.
+- Les rapports hebdomadaires récupèrent automatiquement ces taux ajoutés après coup.
