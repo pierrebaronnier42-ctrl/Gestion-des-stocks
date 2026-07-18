@@ -4,7 +4,7 @@ const STORAGE_KEY = 'gestion-stock-web-v1';
 const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.50.0-login-repair';
+const APP_VERSION = '1.51.0-supabase-rest-fix';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -976,21 +976,66 @@ function saveState() {
   scheduleCloudSave();
 }
 
+const BUILTIN_SUPABASE_CONFIG = {
+  url: 'https://vrhidvzpeyccysmaphze.supabase.co',
+  anonKey: 'sb_publishable_XeWjiu4ZsrL1370HzLIufA_CAf0--X9'
+};
+
+function getSupabaseConfig() {
+  const external = window.SUPABASE_CONFIG || {};
+  return {
+    url: String(external.url || BUILTIN_SUPABASE_CONFIG.url || '').replace(/\/+$/, ''),
+    anonKey: String(external.anonKey || external.key || BUILTIN_SUPABASE_CONFIG.anonKey || '')
+  };
+}
+
 function initSupabaseClient() {
-  const config = window.SUPABASE_CONFIG || {};
-  if (!window.supabase || !config.url || !config.anonKey) {
+  const config = getSupabaseConfig();
+  if (!config.url || !config.anonKey || !window.fetch) {
     cloudReady = false;
+    supabaseClient = null;
     return false;
   }
+  supabaseClient = config;
+  cloudReady = true;
+  return true;
+}
+
+function supabaseHeaders(extra = {}) {
+  return {
+    apikey: supabaseClient.anonKey,
+    Authorization: `Bearer ${supabaseClient.anonKey}`,
+    'Content-Type': 'application/json',
+    ...extra
+  };
+}
+
+function supabaseRestUrl(pathAndQuery) {
+  return `${supabaseClient.url}/rest/v1/${pathAndQuery}`;
+}
+
+async function readSupabaseError(response) {
+  const text = await response.text().catch(() => '');
   try {
-    supabaseClient = window.supabase.createClient(config.url, config.anonKey);
-    cloudReady = true;
-    return true;
+    const json = JSON.parse(text);
+    return json.message || json.error_description || json.error || text || response.statusText;
   } catch (error) {
-    console.error('Initialisation Supabase impossible', error);
-    cloudReady = false;
-    return false;
+    return text || response.statusText;
   }
+}
+
+async function supabaseRequest(pathAndQuery, options = {}) {
+  if (!cloudReady || !supabaseClient) throw new Error('Supabase non configuré');
+  const response = await fetch(supabaseRestUrl(pathAndQuery), {
+    ...options,
+    headers: supabaseHeaders(options.headers || {})
+  });
+  if (!response.ok) {
+    throw new Error(await readSupabaseError(response));
+  }
+  if (response.status === 204) return null;
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
 }
 
 function scheduleCloudSave() {
@@ -1007,30 +1052,52 @@ async function saveCloudState() {
       data: state,
       updated_at: new Date().toISOString()
     };
-    const { error } = await supabaseClient.from(CLOUD_TABLE).upsert(payload, { onConflict: 'id' });
-    if (error) throw error;
+    await supabaseRequest(`${CLOUD_TABLE}?on_conflict=id`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(payload)
+    });
     lastCloudSaveAt = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
   } catch (error) {
     console.error('Erreur sauvegarde Supabase', error);
-    toast('Sauvegarde cloud impossible. Vérifie Supabase/RLS.');
+    toast(`Sauvegarde cloud impossible : ${error.message || 'vérifie Supabase/RLS'}`);
   }
 }
 
 async function loadCloudState() {
   if (!cloudReady || !supabaseClient) return null;
   try {
-    const { data, error } = await supabaseClient
-      .from(CLOUD_TABLE)
-      .select('data, updated_at')
-      .eq('id', CLOUD_RECORD_ID)
-      .maybeSingle();
-    if (error) throw error;
-    return data?.data || null;
+    const rows = await supabaseRequest(`${CLOUD_TABLE}?select=data,updated_at&id=eq.${encodeURIComponent(CLOUD_RECORD_ID)}&limit=1`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' }
+    });
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return row?.data || null;
   } catch (error) {
     console.error('Erreur chargement Supabase', error);
-    toast('Chargement cloud impossible. Données locales utilisées.');
+    toast(`Chargement cloud impossible : ${error.message || 'données locales utilisées'}`);
     return null;
   }
+}
+
+async function testSupabaseConnection() {
+  if (!initSupabaseClient()) {
+    toast('Supabase non configuré : vérifie supabase-config.js.');
+    render();
+    return;
+  }
+  try {
+    await supabaseRequest(`${CLOUD_TABLE}?select=id,updated_at&id=eq.${encodeURIComponent(CLOUD_RECORD_ID)}&limit=1`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' }
+    });
+    cloudReady = true;
+    toast('Connexion Supabase OK.');
+  } catch (error) {
+    console.error('Test Supabase impossible', error);
+    toast(`Supabase répond mais refuse la connexion : ${error.message || 'vérifie table app_data/RLS'}`);
+  }
+  render();
 }
 
 async function syncFromCloud() {
@@ -4496,6 +4563,7 @@ function renderSettings() {
           <span>${cloudReady ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')}` : 'Vérifie le fichier supabase-config.js et la table app_data.'}</span>
         </div>
         <div class="grid">
+          <button data-action="testSupabase" class="secondary">Tester la connexion Supabase</button>
           <button data-action="syncFromCloud" class="secondary">Charger depuis Supabase</button>
           <button data-action="syncToCloud" class="success">Envoyer vers Supabase</button>
           <button data-action="exportJson" class="secondary">Télécharger la sauvegarde JSON</button>
@@ -5656,6 +5724,7 @@ Annuler = non, il sera archivé normalement.`);
     render();
     toast('Backup supprimé');
   },
+  testSupabase() { testSupabaseConnection(); },
   syncFromCloud() { syncFromCloud(); },
   syncToCloud() { syncToCloudNow(); },
   exportJson() { downloadJson(); },

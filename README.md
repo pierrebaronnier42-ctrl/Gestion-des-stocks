@@ -241,3 +241,9 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 
 ## Version 1.50
 - Correctif accès : paquet complet avec app.js, détection de cache bloqué et bouton de réparation si le logiciel reste vide.
+
+
+## Version 1.51
+
+- Correction Supabase : connexion REST directe sans dépendre du CDN Supabase.
+- Ajout du bouton Tester la connexion Supabase dans Paramètres.
