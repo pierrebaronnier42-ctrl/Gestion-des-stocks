@@ -229,7 +229,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Export PDF hebdomadaire avec les trois jours de livraison, les inventaires, les BC, les BL, les tickets température et les taux de modification.
 
 
-## Version 1.49
+## Version 1.50
 
 - Remise en place des icônes dans le menu des pages.
 - Ajout d’un écran de connexion par identifiant et mot de passe.
@@ -237,3 +237,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Nouvelle page `Gestion utilisateur` réservée au niveau `400 - Admin`.
 - L’Admin peut créer, supprimer des utilisateurs et modifier leurs mots de passe.
 - Au premier lancement sans utilisateur, le logiciel demande de créer le premier compte Admin.
+
+
+## Version 1.50
+- Correctif accès : paquet complet avec app.js, détection de cache bloqué et bouton de réparation si le logiciel reste vide.

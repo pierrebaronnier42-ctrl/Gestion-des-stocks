@@ -1105,3 +1105,5 @@ body.auth-required .content {
     min-width: 760px;
   }
 }
+
+.emergency-card { max-width: 720px; margin: 24px auto; }

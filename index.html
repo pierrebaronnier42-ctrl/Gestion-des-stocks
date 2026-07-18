@@ -6,7 +6,7 @@
   <title>Gestion Stock Web</title>
   <meta name="theme-color" content="#111827" />
   <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css?v=1.49" />
+  <link rel="stylesheet" href="styles.css?v=1.50" />
 </head>
 <body>
   <div class="app-shell">
@@ -51,10 +51,46 @@
 
   <div id="toast" class="toast hidden"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="supabase-config.js?v=1.49"></script>
+  <script src="supabase-config.js?v=1.50"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-  <script src="app.js?v=1.49"></script>
+  <script src="app.js?v=1.50"></script>
+  <script>
+    setTimeout(() => {
+      const app = document.querySelector('#app');
+      const nav = document.querySelector('#nav');
+      const isStillStatic = app && nav && !app.textContent.trim() && nav.children.length === 0;
+      if (!window.__GESTION_STOCK_APP_JS_LOADED || isStillStatic) {
+        if (app) {
+          app.innerHTML = `
+            <div class="card emergency-card">
+              <h3>Le logiciel n’a pas chargé correctement</h3>
+              <p class="muted">Le fichier app.js ou le cache de l’ancienne version bloque l’accès. Les données ne sont pas supprimées.</p>
+              <div class="actions-row">
+                <button class="danger" id="clearCacheReload">Vider le cache et recharger</button>
+                <button class="secondary" onclick="location.reload()">Recharger simplement</button>
+              </div>
+              <p class="muted small">Si le problème continue, remplace bien tous les fichiers du ZIP sur GitHub : index.html, app.js, styles.css, sw.js, manifest.json, supabase-config.js et supabase-setup.sql.</p>
+            </div>`;
+          document.querySelector('#pageTitle').textContent = 'Réparation accès';
+          document.querySelector('#clearCacheReload')?.addEventListener('click', async () => {
+            try {
+              if ('serviceWorker' in navigator) {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(reg => reg.unregister()));
+              }
+              if (window.caches) {
+                const keys = await caches.keys();
+                await Promise.all(keys.map(key => caches.delete(key)));
+              }
+            } finally {
+              location.reload();
+            }
+          });
+        }
+      }
+    }, 2500);
+  </script>
 </body>
 </html>

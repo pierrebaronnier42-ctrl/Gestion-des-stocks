@@ -1,9 +1,10 @@
 /* Gestion Stock Web - version locale prête à héberger */
+window.__GESTION_STOCK_APP_JS_LOADED = true;
 const STORAGE_KEY = 'gestion-stock-web-v1';
 const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.49.0-login-users-icons';
+const APP_VERSION = '1.50.0-login-repair';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -6181,4 +6182,21 @@ async function initializeApp() {
   }
 }
 
-initializeApp();
+initializeApp()
+  .then(() => { window.__GESTION_STOCK_APP_READY = true; })
+  .catch(error => {
+    console.error('Démarrage impossible', error);
+    window.__GESTION_STOCK_APP_ERROR = error;
+    try {
+      cloudReady = false;
+      renderAppAfterAuth();
+      toast('Démarrage cloud impossible. Mode local chargé.');
+      window.__GESTION_STOCK_APP_READY = true;
+    } catch (fallbackError) {
+      console.error('Démarrage local impossible', fallbackError);
+      const app = document.querySelector('#app');
+      if (app) {
+        app.innerHTML = `<div class="card"><h3>Chargement impossible</h3><p class="muted">Le logiciel n’a pas pu démarrer. Recharge complètement la page ou réimporte les fichiers du dernier ZIP.</p><button class="danger" onclick="navigator.serviceWorker?.getRegistrations?.().then(r=>Promise.all(r.map(x=>x.unregister()))).finally(()=>location.reload())">Vider le cache et recharger</button></div>`;
+      }
+    }
+  });
