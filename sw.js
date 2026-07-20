@@ -1,4 +1,4 @@
-const CACHE_NAME = 'gestion-stock-v1.54';
+const CACHE_NAME = 'gestion-stock-v1.55';
 const ASSETS = ['./', './index.html', './styles.css?v=1.54', './app.js?v=1.54', './supabase-config.js?v=1.54', './manifest.json'];
 
 self.addEventListener('install', event => {

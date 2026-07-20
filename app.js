@@ -5,7 +5,7 @@ const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const CLOUD_META_STORAGE_KEY = 'gestion-stock-web-v1-cloud-meta';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.54.0-auto-supabase-connection';
+const APP_VERSION = '1.55.0-product-zone-sort';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -166,6 +166,7 @@ let inventorySubPage = 'entry';
 let showArchivedProducts = false;
 let productSubPage = 'active';
 let productCategoryFilter = 'all';
+let productZoneFilter = 'all';
 let productSortMode = 'sequence';
 let inventoryDraftValues = {};
 let selectedMonthEndMonth = today().slice(0, 7);
@@ -1308,6 +1309,7 @@ function setPage(pageId) {
   if (pageId === 'products') {
     productSubPage = 'active';
     productCategoryFilter = 'all';
+    productZoneFilter = 'all';
     productSortMode = 'inventory';
   }
   currentFilter = '';
@@ -1439,6 +1441,14 @@ function bindPageEvents() {
     categoryFilter.value = productCategoryFilter;
     categoryFilter.addEventListener('change', event => {
       productCategoryFilter = event.target.value;
+      render();
+    });
+  }
+  const zoneFilter = document.querySelector('[data-zone-filter]');
+  if (zoneFilter) {
+    zoneFilter.value = productZoneFilter;
+    zoneFilter.addEventListener('change', event => {
+      productZoneFilter = event.target.value;
       render();
     });
   }
@@ -3905,7 +3915,19 @@ function productSequenceSort(a, b) {
     || String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' });
 }
 
+function productZoneLabel(product = {}) {
+  return getZone(product.storageZoneId)?.name || product.storageLabel || 'Sans zone';
+}
+
+function productZoneSort(a, b) {
+  return String(productZoneLabel(a)).localeCompare(String(productZoneLabel(b)), 'fr', { sensitivity: 'base' })
+    || productSequenceSort(a, b);
+}
+
 function productSort(a, b) {
+  if (productSortMode === 'zone') {
+    return productZoneSort(a, b);
+  }
   if (productSortMode === 'category') {
     return productCategoryLabel(a).localeCompare(productCategoryLabel(b), 'fr', { sensitivity: 'base' }) || productSequenceSort(a, b);
   }
@@ -3920,12 +3942,13 @@ function productSort(a, b) {
 
 function productSearchText(product = {}) {
   const slots = productInventorySlots(product).map(inventorySlotLabel).join(' ');
-  const zone = getZone(product.storageZoneId)?.name || product.storageLabel || '';
+  const zone = productZoneLabel(product);
   return [product.sku, product.name, productSequenceValue(product), productCategoryLabel(product), product.unit, product.packageSize, zone, slots].join(' ').toLowerCase();
 }
 
 function productMatchesSearch(product) {
   if (productCategoryFilter !== 'all' && productCategoryLabel(product) !== productCategoryFilter) return false;
+  if (productZoneFilter !== 'all' && String(product.storageZoneId || '') !== productZoneFilter) return false;
   if (!currentFilter) return true;
   return productSearchText(product).includes(currentFilter);
 }
@@ -3934,6 +3957,17 @@ function productCategoryOptions(products) {
   return ['<option value="all">Toutes les catégories</option>'].concat(
     PRODUCT_CATEGORY_LABELS.map(category => `<option value="${escapeHtml(category)}" ${productCategoryFilter === category ? 'selected' : ''}>${escapeHtml(category)}</option>`)
   ).join('');
+}
+
+function productZoneOptions(products) {
+  const usedZoneIds = new Set(products.map(product => product.storageZoneId || '').filter(Boolean));
+  const options = state.zones
+    .filter(zone => usedZoneIds.has(zone.id))
+    .sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) || String(a.name || '').localeCompare(String(b.name || ''), 'fr', { sensitivity: 'base' }))
+    .map(zone => `<option value="${escapeHtml(zone.id)}" ${productZoneFilter === zone.id ? 'selected' : ''}>${escapeHtml(zone.code ? zone.code + ' · ' : '')}${escapeHtml(zone.name || '')}</option>`);
+  const hasNoZone = products.some(product => !product.storageZoneId);
+  if (hasNoZone) options.push(`<option value="" ${productZoneFilter === '' ? 'selected' : ''}>Sans zone</option>`);
+  return ['<option value="all">Toutes les zones</option>'].concat(options).join('');
 }
 
 function renderProductRows({ archivedOnly = false, activeOnly = false } = {}) {
@@ -3986,6 +4020,7 @@ function renderProducts() {
   const rows = renderProductRows(productSubPage === 'archived' ? { archivedOnly: true } : { activeOnly: true });
   const filteredCount = viewProducts.filter(productMatchesSearch).length;
   const categoryOptions = productCategoryOptions(viewProducts);
+  const zoneOptions = productZoneOptions(viewProducts);
   const isArchivedView = productSubPage === 'archived';
   const sequenceDuplicates = getProductSequenceDuplicates(activeProducts);
   const sequenceAlert = sequenceDuplicates.length ? `
@@ -4009,10 +4044,12 @@ function renderProducts() {
       <div class="toolbar">
         <div class="toolbar-left">
           <h3>${isArchivedView ? 'Produits archivés' : 'Produits de base'}</h3>
-          <input class="search" data-search placeholder="Rechercher produit, référence, catégorie, planning..." />
+          <input class="search" data-search placeholder="Rechercher produit, référence, catégorie, zone, planning..." />
           <select class="filter-select" data-category-filter aria-label="Filtrer par catégorie">${categoryOptions}</select>
+          <select class="filter-select" data-zone-filter aria-label="Filtrer par zone de stockage">${zoneOptions}</select>
           <select class="filter-select" data-product-sort aria-label="Trier les produits">
             <option value="sequence">Séquence / Fin de mois</option>
+            <option value="zone">Zone de stockage</option>
             <option value="inventory">Ordre inventaire / bon de commande</option>
             <option value="category">Catégorie A → Z</option>
             <option value="name">Nom A → Z</option>

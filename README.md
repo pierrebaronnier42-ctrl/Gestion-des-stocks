@@ -1,3 +1,9 @@
+## Nouveautés v1.55
+
+- Ajout d’un filtre **Toutes les zones / zone de stockage** dans Produits.
+- Ajout d’un tri **Zone de stockage** dans le catalogue produits.
+- Le tri par zone conserve l’ordre de séquence à l’intérieur de chaque zone.
+
 Version v1.48 - backups et points de restauration
 
 # Gestion de Stock Web — version GitHub Pages + Supabase
