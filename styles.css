@@ -1107,3 +1107,16 @@ body.auth-required .content {
 }
 
 .emergency-card { max-width: 720px; margin: 24px auto; }
+
+
+.report-rates-wrap table,
+.report-documents-wrap table {
+  min-width: 760px;
+}
+.report-documents-wrap td {
+  vertical-align: top;
+}
+.report-rates-wrap td:nth-child(2),
+.report-rates-wrap td:nth-child(3) {
+  font-weight: 700;
+}

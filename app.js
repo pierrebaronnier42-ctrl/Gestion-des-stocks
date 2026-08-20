@@ -5,7 +5,7 @@ const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const CLOUD_META_STORAGE_KEY = 'gestion-stock-web-v1-cloud-meta';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.55.0-product-zone-sort';
+const APP_VERSION = '1.56.0-report-landscape-cloud-optimized';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -185,6 +185,7 @@ let cloudAutoConnectInFlight = false;
 let isApplyingCloudState = false;
 let lastCloudSaveAt = '';
 let lastCloudUpdatedAt = '';
+let lastCloudSaveMode = '';
 let lastCloudError = '';
 let reportDocumentUrlCache = new Map();
 let currentUser = loadAuthSession();
@@ -857,6 +858,67 @@ function stateWithoutHeavyScanData(sourceState = state) {
   return clone;
 }
 
+const CLOUD_HEAVY_SCAN_LIMIT = 1500000;
+
+function scanHeavyDataSize(sourceState = state) {
+  const allScans = [...(sourceState.scannedOrders || []), ...(sourceState.scannedReceipts || [])];
+  return allScans.reduce((total, scan) => total + scanPages(scan).reduce((sum, page) => sum + String(page.fileData || '').length, 0), 0);
+}
+
+function formatBytes(value = 0) {
+  const n = Number(value) || 0;
+  if (n < 1024) return `${Math.round(n)} o`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} Ko`;
+  return `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`;
+}
+
+function buildCloudUploadState(sourceState = state, options = {}) {
+  const heavyBytes = scanHeavyDataSize(sourceState);
+  const useLightPayload = options.light === true || heavyBytes > CLOUD_HEAVY_SCAN_LIMIT;
+  return {
+    data: useLightPayload ? stateWithoutHeavyScanData(sourceState) : sourceState,
+    light: useLightPayload,
+    heavyBytes
+  };
+}
+
+function findMatchingLocalScan(scan, localList = []) {
+  if (!scan) return null;
+  return (localList || []).find(local => {
+    if (scan.id && local.id === scan.id) return true;
+    if (scan.date !== local.date) return false;
+    if (scan.docType || local.docType) return scan.docType === local.docType && scan.type === local.type;
+    return scan.type === local.type;
+  }) || null;
+}
+
+function mergeScanHeavyDataFromLocal(cloudList = [], localList = []) {
+  return (cloudList || []).map(scan => {
+    const localScan = findMatchingLocalScan(scan, localList);
+    if (!localScan) return scan;
+    const localPages = scanPages(localScan);
+    const pages = scanPages(scan).map((page, index) => {
+      if (page.fileData) return page;
+      const localPage = (page.id ? localPages.find(item => item.id === page.id) : null) || localPages[index];
+      if (!localPage?.fileData) return page;
+      return {
+        ...page,
+        fileData: localPage.fileData,
+        fileType: page.fileType || localPage.fileType,
+        fileName: page.fileName || localPage.fileName
+      };
+    });
+    return { ...scan, pages };
+  });
+}
+
+function mergeCloudDataWithLocalHeavyData(cloudData, localState = state) {
+  const merged = normalizeState(cloudData || {});
+  merged.scannedOrders = mergeScanHeavyDataFromLocal(merged.scannedOrders, localState.scannedOrders || []);
+  merged.scannedReceipts = mergeScanHeavyDataFromLocal(merged.scannedReceipts, localState.scannedReceipts || []);
+  return merged;
+}
+
 
 function loadBackups() {
   try {
@@ -1085,9 +1147,10 @@ function applyCloudMeta(updatedAt = '') {
 async function saveCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return;
   try {
+    const cloudUpload = buildCloudUploadState(state, options);
     const payload = {
       id: CLOUD_RECORD_ID,
-      data: state,
+      data: cloudUpload.data,
       updated_at: new Date().toISOString()
     };
     await supabaseRequest(`${CLOUD_TABLE}?on_conflict=id`, {
@@ -1097,7 +1160,10 @@ async function saveCloudState(options = {}) {
     });
     lastCloudSaveAt = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     lastCloudUpdatedAt = payload.updated_at;
-    saveCloudMeta({ updatedAt: payload.updated_at, savedAt: payload.updated_at, loadedAt: payload.updated_at });
+    lastCloudSaveMode = cloudUpload.light
+      ? `allégé · documents gardés localement (${formatBytes(cloudUpload.heavyBytes)})`
+      : 'complet';
+    saveCloudMeta({ updatedAt: payload.updated_at, savedAt: payload.updated_at, loadedAt: payload.updated_at, light: cloudUpload.light, heavyBytes: cloudUpload.heavyBytes });
     lastCloudError = '';
   } catch (error) {
     console.error('Erreur sauvegarde Supabase', error);
@@ -1142,7 +1208,7 @@ function applyCloudState(cloudData, options = {}) {
   if (!cloudData) return false;
   if (options.backupLocal) createBackup('Avant connexion automatique Supabase', { silent: true });
   isApplyingCloudState = true;
-  state = normalizeState(cloudData);
+  state = mergeCloudDataWithLocalHeavyData(cloudData, state);
   const localSave = saveStateLocalOnly(state);
   isApplyingCloudState = false;
   applyCloudMeta(lastCloudUpdatedAt);
@@ -1241,7 +1307,7 @@ async function syncFromCloud() {
 async function syncToCloudNow() {
   if (!cloudReady) initSupabaseClient();
   await saveCloudState();
-  if (!lastCloudError) toast('Données envoyées vers Supabase.');
+  if (!lastCloudError) toast(`Données envoyées vers Supabase${lastCloudSaveMode ? ` (${lastCloudSaveMode})` : ''}.`);
 }
 
 function updateBrandLogo() {
@@ -4624,6 +4690,37 @@ function weeklyReportDaySummary(date) {
   };
 }
 
+function weeklyReportRatesRowsHtml(dates) {
+  return dates.map(date => `
+    <tr>
+      <td><strong>${escapeHtml(formatDateFr(date))}</strong><br><span class="muted">${escapeHtml(dayNames[parseDate(date).getDay()])}</span></td>
+      <td>${escapeHtml(orderModificationRateLabel(date, 'general'))}</td>
+      <td>${escapeHtml(orderModificationRateLabel(date, 'ultra'))}</td>
+    </tr>
+  `).join('');
+}
+
+function weeklyReportRatesTableHtml(dates) {
+  return `<div class="table-wrap report-rates-wrap"><table><thead><tr><th>Date</th><th>Général</th><th>Ultra frais</th></tr></thead><tbody>${weeklyReportRatesRowsHtml(dates)}</tbody></table></div>`;
+}
+
+function weeklyReportAllLinkedDocumentsHtml(dates, linkMap = null) {
+  const rows = dates.flatMap(date => weeklyReportScansForDate(date).map(item => {
+    const pages = scanPages(item.scan || {});
+    return `
+      <tr>
+        <td><strong>${escapeHtml(formatDateFr(date))}</strong><br><span class="muted">${escapeHtml(dayNames[parseDate(date).getDay()])}</span></td>
+        <td>${escapeHtml(item.label)}</td>
+        <td>${item.scan ? 'Présent' : 'Manquant'}</td>
+        <td>${pages.length || '-'}</td>
+        <td>${escapeHtml(pages.map(page => page.fileName || '').filter(Boolean).join(' | ') || '-')}</td>
+        <td>${weeklyReportDocumentActionHtml(item, linkMap)}</td>
+      </tr>
+    `;
+  })).join('');
+  return `<div class="table-wrap compact-table report-documents-wrap"><table><thead><tr><th>Date</th><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 function renderReports() {
   const weekStart = startOfWeekInput(selectedReportWeek || today());
   selectedReportWeek = weekStart;
@@ -4639,7 +4736,8 @@ function renderReports() {
       <td>${escapeHtml(row.rateLabel)}</td>
     </tr>
   `).join('');
-  const linkedDocuments = dates.map(date => weeklyReportLinkedDocumentsHtml(date)).join('');
+  const linkedDocuments = weeklyReportAllLinkedDocumentsHtml(dates);
+  const ratesTable = weeklyReportRatesTableHtml(dates);
 
   return `
     <div class="card subpage-heading">
@@ -4658,8 +4756,11 @@ function renderReports() {
     <div class="card" style="margin-top:18px;">
       <div class="toolbar"><h3>Aperçu de la semaine</h3><span class="muted">${escapeHtml(formatDateFr(dates[0]))} au ${escapeHtml(formatDateFr(dates[2]))}</span></div>
       <div class="table-wrap report-summary-wrap"><table><thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead><tbody>${summaryRows}</tbody></table></div>
+      <h3>Taux de modification regroupés</h3>
+      <p class="muted">Les taux Général et Ultra frais sont regroupés ici pour la semaine.</p>
+      ${ratesTable}
       <h3>Documents liés</h3>
-      <p class="muted">Chaque document présent possède maintenant un lien qui ouvre directement son PDF.</p>
+      <p class="muted">Les BC, BL et tickets température sont regroupés en liens PDF. Les images ne sont plus affichées directement dans le rapport.</p>
       ${linkedDocuments}
     </div>
   `;
@@ -4719,6 +4820,11 @@ function renderUsers() {
 }
 
 function renderSettings() {
+  const cloudModeDetail = lastCloudSaveMode ? ` · Mode : ${escapeHtml(lastCloudSaveMode)}` : '';
+  const heavyBytes = scanHeavyDataSize();
+  const cloudHeavyHint = heavyBytes > CLOUD_HEAVY_SCAN_LIMIT
+    ? `<p class="muted small">Documents numérisés volumineux détectés (${escapeHtml(formatBytes(heavyBytes))}) : l’envoi Supabase passe automatiquement en mode allégé pour éviter les blocages. Les fichiers restent sur cet appareil.</p>`
+    : '';
   return `
     <div class="grid grid-2">
       <div class="card">
@@ -4749,8 +4855,9 @@ function renderSettings() {
         <p class="muted">La connexion Supabase est automatique : au démarrage, au retour réseau et au retour sur l’onglet. Les données restent aussi gardées localement en secours sur l’appareil.</p>
         <div class="cloud-status ${cloudReady && !lastCloudError ? 'success' : 'warning'}">
           <strong>${cloudReady && !lastCloudError ? 'Cloud Supabase connecté automatiquement' : 'Connexion Supabase automatique en attente'}</strong>
-          <span>${cloudReady && !lastCloudError ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')} ${lastCloudUpdatedAt ? `· Cloud : ${escapeHtml(new Date(lastCloudUpdatedAt).toLocaleString('fr-FR'))}` : ''}` : `Le logiciel fonctionne en local et réessaie automatiquement. ${lastCloudError ? `Détail : ${escapeHtml(lastCloudError)}` : 'Tu peux aussi tester manuellement.'}`}</span>
+          <span>${cloudReady && !lastCloudError ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')} ${lastCloudUpdatedAt ? `· Cloud : ${escapeHtml(new Date(lastCloudUpdatedAt).toLocaleString('fr-FR'))}` : ''}${cloudModeDetail}` : `Le logiciel fonctionne en local et réessaie automatiquement. ${lastCloudError ? `Détail : ${escapeHtml(lastCloudError)}` : 'Tu peux aussi tester manuellement.'}`}</span>
         </div>
+        ${cloudHeavyHint}
         <div class="grid">
           <button data-action="autoConnectSupabase" class="success">Connexion automatique maintenant</button>
           <button data-action="testSupabase" class="secondary">Tester la connexion Supabase</button>
@@ -6245,15 +6352,12 @@ async function printWeeklyReportPdf(weekStart) {
       <td>${escapeHtml(row.rateLabel)}</td>
     </tr>
   `).join('');
-  const daySections = dates.map(date => `
-    <section class="day-section">
-      <h2>${escapeHtml(formatDateFr(date))}</h2>
-      <div class="rate-box"><strong>Taux de modification commandes :</strong> ${escapeHtml(orderModificationRatesForDate(date))}</div>
-      <h3>Inventaires</h3>
+  const rateRows = weeklyReportRatesRowsHtml(dates);
+  const documentLinks = weeklyReportAllLinkedDocumentsHtml(dates, linkMap);
+  const inventorySections = dates.map(date => `
+    <section class="day-section inventory-day-section">
+      <h2>Inventaires · ${escapeHtml(dayNames[parseDate(date).getDay()])} ${escapeHtml(formatDateFr(date))}</h2>
       ${weeklyReportInventorySectionHtml(date)}
-      <h3>Documents BC / BL / ticket température</h3>
-      <table class="compact-table"><thead><tr><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${weeklyReportDocumentSummaryHtml(date, linkMap)}</tbody></table>
-      <div class="document-pages">${weeklyReportDocumentPagesHtml(date, linkMap)}</div>
     </section>
   `).join('');
   const html = `<!doctype html>
@@ -6262,7 +6366,7 @@ async function printWeeklyReportPdf(weekStart) {
   <meta charset="utf-8" />
   <title>${escapeHtml(title)}</title>
   <style>
-    @page { size: A4 portrait; margin: 10mm; }
+    @page { size: A4 landscape; margin: 9mm; }
     * { box-sizing: border-box; }
     body { font-family: Arial, Helvetica, sans-serif; color: #111827; margin: 0; font-size: 11px; }
     header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
@@ -6277,13 +6381,12 @@ async function printWeeklyReportPdf(weekStart) {
     th, td { border: 1px solid #d1d5db; padding: 4px 5px; vertical-align: top; }
     th { background: #f3f4f6; text-align: left; text-transform: uppercase; letter-spacing: .03em; font-size: 9px; }
     .compact-table { font-size: 9px; }
+    .page-section { page-break-before: always; }
+    .page-section:first-of-type { page-break-before: auto; }
     .day-section { page-break-before: always; }
     .day-section:first-of-type { page-break-before: auto; }
-    .document-pages { display: grid; gap: 10px; }
-    .doc-page { page-break-inside: avoid; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px; margin-top: 8px; }
-    .doc-page img { display: block; max-width: 100%; max-height: 245mm; margin: 4px auto 0; object-fit: contain; }
-    .doc-title { font-weight: 700; margin-bottom: 4px; }
-    .doc-title-link { float: right; font-weight: 400; }
+    .report-rates-table td { font-size: 13px; padding: 8px; }
+    .document-pages, .doc-page img { display: none !important; }
     .doc-pdf-link { color: #1d4ed8; font-weight: 700; text-decoration: underline; }
     .doc-block { border: 1px dashed #9ca3af; border-radius: 8px; padding: 8px; margin-top: 8px; background: #f9fafb; }
     .missing { color: #92400e; background: #fffbeb; }
@@ -6302,12 +6405,27 @@ async function printWeeklyReportPdf(weekStart) {
       Version ${escapeHtml(APP_VERSION)}
     </div>
   </header>
-  <h2>Synthèse semaine</h2>
-  <table>
-    <thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead>
-    <tbody>${summaryRows}</tbody>
-  </table>
-  ${daySections}
+  <section class="page-section">
+    <h2>Synthèse semaine</h2>
+    <table>
+      <thead><tr><th>Date</th><th>Jour</th><th>Inventaires</th><th>BC</th><th>BL</th><th>Ticket température</th><th>Taux modification</th></tr></thead>
+      <tbody>${summaryRows}</tbody>
+    </table>
+  </section>
+  <section class="page-section">
+    <h2>Taux de modification commandes</h2>
+    <p class="subtitle">Taux regroupés sur une page pour les commandes Général et Ultra frais.</p>
+    <table class="report-rates-table">
+      <thead><tr><th>Date</th><th>Général</th><th>Ultra frais</th></tr></thead>
+      <tbody>${rateRows}</tbody>
+    </table>
+  </section>
+  <section class="page-section">
+    <h2>Documents liés BC / BL / ticket température</h2>
+    <p class="subtitle">Les documents sont volontairement affichés uniquement sous forme de liens PDF. Les images ne sont pas intégrées directement dans le rapport.</p>
+    ${documentLinks}
+  </section>
+  ${inventorySections}
   <footer>Rapport hebdomadaire généré depuis la page Rapports.</footer>
   <script>window.addEventListener('load', () => setTimeout(() => window.print(), 350));</script>
 </body>

@@ -271,3 +271,12 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Si le cloud est indisponible, le logiciel démarre en local puis réessaie automatiquement.
 - Reconnexion automatique au retour réseau et au retour sur l’onglet.
 - Ajout d’un bouton `Connexion automatique maintenant` dans Paramètres.
+
+
+## Version 1.56
+
+- Optimisation Supabase : si les documents numérisés sont trop lourds, l’envoi cloud passe automatiquement en mode allégé pour éviter les blocages. Les fichiers lourds restent conservés localement sur l’appareil.
+- La restauration depuis Supabase conserve les fichiers locaux déjà présents quand le cloud contient une sauvegarde allégée.
+- Page Rapports : les taux de modification Général / Ultra frais sont regroupés dans un tableau dédié.
+- Export rapport hebdomadaire en format paysage.
+- Les BC, BL et tickets température sont regroupés sous forme de liens PDF uniquement, sans affichage direct des images dans le rapport.
