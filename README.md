@@ -1,3 +1,12 @@
+## Nouveautés v1.62
+
+- Mise à jour automatique du catalogue Produits depuis `Liste inventaire 17.08.2026.pdf`.
+- Les produits déjà existants gardent leur nom et leur séquence déjà attribuée.
+- Les nouveaux produits sont ajoutés avec la séquence `0` en attente.
+- Les produits absents de cette nouvelle liste sont archivés automatiquement.
+- La séquence `0` est maintenant acceptée dans Produits et Fin de mois.
+- Cache GitHub Pages mis à jour en v1.62.
+
 ## Nouveautés v1.61
 
 - Retour à la version **sans conversion des BC/BL en tableau** : les documents restent consultables comme documents/PDF.
@@ -272,7 +281,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Message clair si un PDF n’est plus disponible sur l’appareil.
 
 
-## Version 1.61
+## Version 1.62
 
 - Retour à la version sans documents convertis en tableau.
 - Les BC, BL et tickets température restent des documents/PDF.
@@ -282,7 +291,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Si le bucket n’est pas disponible, l’application tente encore un envoi direct plus élevé, puis bascule en mode allégé si Supabase refuse.
 
 
-## Version 1.61
+## Version 1.62
 
 - Ajout d’un indicateur visible pendant l’envoi Supabase.
 - Affichage des états : en attente, envoi en cours, progression des fichiers Storage, succès ou erreur.

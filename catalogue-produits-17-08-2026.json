@@ -1,0 +1,1717 @@
+[
+  {
+    "sku": "9950.000",
+    "name": "CO2 (20KG)",
+    "category": "Sec"
+  },
+  {
+    "sku": "9960.000",
+    "name": "CO2 REMBO(110KG)",
+    "category": "Sec"
+  },
+  {
+    "sku": "9965.000",
+    "name": "CO2 REMBO(180KG)",
+    "category": "Sec"
+  },
+  {
+    "sku": "17108.001",
+    "name": "ECCLEA PAST 1500S",
+    "category": "Sec"
+  },
+  {
+    "sku": "17108.002",
+    "name": "ECCLEA PAST 5000S",
+    "category": "Sec"
+  },
+  {
+    "sku": "17108.003",
+    "name": "NETTOYANT LAIT",
+    "category": "Sec"
+  },
+  {
+    "sku": "5320.096",
+    "name": "CARTOUCHE OZONE",
+    "category": "Sec"
+  },
+  {
+    "sku": "2437.191",
+    "name": "SUMA TERA L56",
+    "category": "Sec"
+  },
+  {
+    "sku": "1672.000",
+    "name": "GANT GRILL",
+    "category": "Sec"
+  },
+  {
+    "sku": "80000.392",
+    "name": "ADHESIF MARRON 6 RLX",
+    "category": "Sec"
+  },
+  {
+    "sku": "6961.102",
+    "name": "AMC NETTOY LT/CF X50",
+    "category": "Sec"
+  },
+  {
+    "sku": "327.020",
+    "name": "EPONGE ABRASIVE",
+    "category": "Sec"
+  },
+  {
+    "sku": "301.114",
+    "name": "MCD GRILL QSR",
+    "category": "Sec"
+  },
+  {
+    "sku": "3574.030",
+    "name": "MCD TAMP. GR. NV",
+    "category": "Sec"
+  },
+  {
+    "sku": "13170.003",
+    "name": "RECHARG TAMPON FRIT",
+    "category": "Sec"
+  },
+  {
+    "sku": "6961.103",
+    "name": "PAST NET CAFE MELITA",
+    "category": "Sec"
+  },
+  {
+    "sku": "4060.001",
+    "name": "OXYVIR DESINFECTANT",
+    "category": "Sec"
+  },
+  {
+    "sku": "300.011",
+    "name": "SG NETTOYANT INOX",
+    "category": "Sec"
+  },
+  {
+    "sku": "4701.075",
+    "name": "CREME A RECURER",
+    "category": "Sec"
+  },
+  {
+    "sku": "215.209",
+    "name": "KAY CONTACT CLEANER",
+    "category": "Sec"
+  },
+  {
+    "sku": "830.039",
+    "name": "MCD TOILET RESTROOM",
+    "category": "Sec"
+  },
+  {
+    "sku": "355.586",
+    "name": "SAVON ANTIMICROBE 1L",
+    "category": "Sec"
+  },
+  {
+    "sku": "2786.027",
+    "name": "SUMA FREEZE",
+    "category": "Sec"
+  },
+  {
+    "sku": "4060.028",
+    "name": "SOMA SHAKE",
+    "category": "Sec"
+  },
+  {
+    "sku": "2722.034",
+    "name": "KL DETARTRANT 2",
+    "category": "Sec"
+  },
+  {
+    "sku": "2205.009",
+    "name": "DESINF.TOMA. DIVERS.",
+    "category": "Sec"
+  },
+  {
+    "sku": "215.165",
+    "name": "HEAVY DUTY DEGREASER",
+    "category": "Sec"
+  },
+  {
+    "sku": "3188.028",
+    "name": "MOP ABSORBANTE V2",
+    "category": "Sec"
+  },
+  {
+    "sku": "18019.000",
+    "name": "SUPPORT PLIABLE MOP",
+    "category": "Sec"
+  },
+  {
+    "sku": "334.132",
+    "name": "SERVIET.COMPTOIR X72",
+    "category": "Sec"
+  },
+  {
+    "sku": "3575.033",
+    "name": "MCD PORTE TAMP.GRILL",
+    "category": "Sec"
+  },
+  {
+    "sku": "4225.000",
+    "name": "EPONGE POWER PAD KAY",
+    "category": "Sec"
+  },
+  {
+    "sku": "211.102",
+    "name": "CLAX HYPO CONCENTRE",
+    "category": "Sec"
+  },
+  {
+    "sku": "4433.048",
+    "name": "MILD LESSIVE LINGE",
+    "category": "Sec"
+  },
+  {
+    "sku": "646.006",
+    "name": "KIT NETTOYAGE GRILL",
+    "category": "Sec"
+  },
+  {
+    "sku": "2701.009",
+    "name": "TEFLON TAYL 3 RABATS",
+    "category": "Sec"
+  },
+  {
+    "sku": "3420.059",
+    "name": "GANT FILTRAGE MOYEN",
+    "category": "Sec"
+  },
+  {
+    "sku": "3420.060",
+    "name": "GANT FILTRAGE GRAND",
+    "category": "Sec"
+  },
+  {
+    "sku": "871.072",
+    "name": "TABLIER FILTRAGE",
+    "category": "Sec"
+  },
+  {
+    "sku": "1630.021",
+    "name": "PETIT TEFLON HEBT",
+    "category": "Sec"
+  },
+  {
+    "sku": "1630.024",
+    "name": "GRAND TEFLON HEBT",
+    "category": "Sec"
+  },
+  {
+    "sku": "1630.027",
+    "name": "MOYEN TEFLON HEBT",
+    "category": "Sec"
+  },
+  {
+    "sku": "16847.000",
+    "name": "SERRE TETE ET ECRAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "17240.003",
+    "name": "KIT CUILL MCFLURRY",
+    "category": "Sec"
+  },
+  {
+    "sku": "5672.031",
+    "name": "STICKER A UTILI PRIO",
+    "category": "Sec"
+  },
+  {
+    "sku": "13170.000",
+    "name": "RECH MOP 2 TAYLOR",
+    "category": "Sec"
+  },
+  {
+    "sku": "4.170",
+    "name": "FRITES MCCAIN NEW O1",
+    "category": "Négatif"
+  },
+  {
+    "sku": "5.312",
+    "name": "VIANDE 10/1",
+    "category": "Négatif"
+  },
+  {
+    "sku": "1146.056",
+    "name": "VIANDE 3/1",
+    "category": "Négatif"
+  },
+  {
+    "sku": "6.246",
+    "name": "VIANDE 4/1",
+    "category": "Négatif"
+  },
+  {
+    "sku": "6776.124",
+    "name": "POTATOES",
+    "category": "Négatif"
+  },
+  {
+    "sku": "2683.119",
+    "name": "TORTILLA GRAND WRAP2",
+    "category": "Négatif"
+  },
+  {
+    "sku": "14059.002",
+    "name": "PAIN 280",
+    "category": "Négatif"
+  },
+  {
+    "sku": "3114.154",
+    "name": "TORTILLA PETIT WRAP",
+    "category": "Négatif"
+  },
+  {
+    "sku": "16637.010",
+    "name": "PTIT CHICKEN",
+    "category": "Négatif"
+  },
+  {
+    "sku": "4430.178",
+    "name": "POULET WRAP V2 -C",
+    "category": "Négatif"
+  },
+  {
+    "sku": "1242.384",
+    "name": "CHICKEN MYTHIC PATTY",
+    "category": "Négatif"
+  },
+  {
+    "sku": "76.130",
+    "name": "APPLE PIE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "1395.111",
+    "name": "CHICKEN PREMIERE -C",
+    "category": "Négatif"
+  },
+  {
+    "sku": "17584.002",
+    "name": "NUGGETS VEGGIES",
+    "category": "Négatif"
+  },
+  {
+    "sku": "407.771",
+    "name": "NUGGETS 1,5",
+    "category": "Négatif"
+  },
+  {
+    "sku": "7131.111",
+    "name": "BACON",
+    "category": "Négatif"
+  },
+  {
+    "sku": "8.026",
+    "name": "FILET POISSON COLIN",
+    "category": "Négatif"
+  },
+  {
+    "sku": "1916.009",
+    "name": "TESTEUR KAY ASEPT",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11311.006",
+    "name": "MCPOP FRUIT ROUGES",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11312.017",
+    "name": "MCPOP CHOC NOISETTE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11312.020",
+    "name": "MCPOP LOTUS",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11312.016",
+    "name": "MCPOP NOISETTE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "3776.085",
+    "name": "DONUTS SUCRE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "14841.012",
+    "name": "DONUT CHOCOLAT",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11709.007",
+    "name": "BACON BITS",
+    "category": "Négatif"
+  },
+  {
+    "sku": "6780.124",
+    "name": "MACARON CHOCOLAT",
+    "category": "Négatif"
+  },
+  {
+    "sku": "6525.092",
+    "name": "MACARON VANILLE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "20010.000",
+    "name": "MACARON CARAMEL",
+    "category": "Négatif"
+  },
+  {
+    "sku": "20047.000",
+    "name": "MACARON FRAMBOISE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "575.105",
+    "name": "GATEAU ANNIV CHOCO",
+    "category": "Négatif"
+  },
+  {
+    "sku": "18947.002",
+    "name": "GATEAU ANNIV VANILLE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "7390.044",
+    "name": "OIGNONS FONDANTS",
+    "category": "Négatif"
+  },
+  {
+    "sku": "3916.457",
+    "name": "PAIN BIG ROSTI 4,5 P",
+    "category": "Négatif"
+  },
+  {
+    "sku": "13013.002",
+    "name": "ROSTI 280",
+    "category": "Négatif"
+  },
+  {
+    "sku": "8272.824",
+    "name": "PAIN GRAND CHICAGO 2",
+    "category": "Négatif"
+  },
+  {
+    "sku": "1.912",
+    "name": "PAIN REG BB CONGELE2",
+    "category": "Négatif"
+  },
+  {
+    "sku": "3.673",
+    "name": "PAIN BM BB CONGELE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "2.828",
+    "name": "PAIN ROY BB CONGELE2",
+    "category": "Négatif"
+  },
+  {
+    "sku": "19281.003",
+    "name": "PAIN BIG ARCH",
+    "category": "Négatif"
+  },
+  {
+    "sku": "8272.201",
+    "name": "PAIN CBO",
+    "category": "Négatif"
+  },
+  {
+    "sku": "14.271",
+    "name": "PAIN MC MUFFIN",
+    "category": "Négatif"
+  },
+  {
+    "sku": "11.321",
+    "name": "SHAKE MIX 1X1OL",
+    "category": "Négatif"
+  },
+  {
+    "sku": "12.607",
+    "name": "SUNDAE MIX 2",
+    "category": "Négatif"
+  },
+  {
+    "sku": "253.291",
+    "name": "TOMATE CHARNUE",
+    "category": "Négatif"
+  },
+  {
+    "sku": "13.334",
+    "name": "FROMAGE CHEDDAR",
+    "category": "Négatif"
+  },
+  {
+    "sku": "19285.002",
+    "name": "WHITE CHEDDAR",
+    "category": "Négatif"
+  },
+  {
+    "sku": "14109.003",
+    "name": "GOUDA FUME",
+    "category": "Positif"
+  },
+  {
+    "sku": "2783.085",
+    "name": "SALADE MAC BONDUELLE",
+    "category": "Positif"
+  },
+  {
+    "sku": "5239.249",
+    "name": "BATAVIA 6X300G BONDU",
+    "category": "Positif"
+  },
+  {
+    "sku": "8373.012",
+    "name": "MIX SALADE ETE 280G",
+    "category": "Positif"
+  },
+  {
+    "sku": "14543.001",
+    "name": "KIT CAESAR",
+    "category": "Positif"
+  },
+  {
+    "sku": "1809.124",
+    "name": "NECTAR DE POMME BIO",
+    "category": "Positif"
+  },
+  {
+    "sku": "5950.027",
+    "name": "TROPICANA 20CL",
+    "category": "Positif"
+  },
+  {
+    "sku": "13215.000",
+    "name": "BERLINGO POMME PECHE",
+    "category": "Positif"
+  },
+  {
+    "sku": "1912.101",
+    "name": "TOPPING DAIM 3",
+    "category": "Positif"
+  },
+  {
+    "sku": "5928.035",
+    "name": "VINAIG H NOISETTE",
+    "category": "Positif"
+  },
+  {
+    "sku": "2900.108",
+    "name": "SCE NEW YORK CEASAR",
+    "category": "Positif"
+  },
+  {
+    "sku": "7434.030",
+    "name": "JAMBON CROQUE 2",
+    "category": "Positif"
+  },
+  {
+    "sku": "3940.041",
+    "name": "LAIT DEMI ECREME 1 L",
+    "category": "Positif"
+  },
+  {
+    "sku": "7101.075",
+    "name": "CREME SUCRE PARFAIT",
+    "category": "Positif"
+  },
+  {
+    "sku": "8549.113",
+    "name": "PTITE POMME X36",
+    "category": "Positif"
+  },
+  {
+    "sku": "10353.010",
+    "name": "BIERE 0 POURCENT",
+    "category": "Positif"
+  },
+  {
+    "sku": "7870.064",
+    "name": "CAPRI-SUN",
+    "category": "Positif"
+  },
+  {
+    "sku": "552.048",
+    "name": "SAUCE MCDELUXE 5",
+    "category": "Positif"
+  },
+  {
+    "sku": "7919.133",
+    "name": "SAUCE TASTY",
+    "category": "Positif"
+  },
+  {
+    "sku": "5297.100",
+    "name": "SAUCE RANCH INTENSIV",
+    "category": "Positif"
+  },
+  {
+    "sku": "18099.001",
+    "name": "CONCOMBRE HM",
+    "category": "Positif"
+  },
+  {
+    "sku": "2367.021",
+    "name": "PTITE NECTARINE",
+    "category": "Positif"
+  },
+  {
+    "sku": "1466.039",
+    "name": "TOPPING M&M'S 2",
+    "category": "Positif"
+  },
+  {
+    "sku": "13016.010",
+    "name": "SAUCE CHEDDAR 2",
+    "category": "Positif"
+  },
+  {
+    "sku": "9.328",
+    "name": "SAUCE TARTARE",
+    "category": "Positif"
+  },
+  {
+    "sku": "4614.015",
+    "name": "SAUCE CBO",
+    "category": "Positif"
+  },
+  {
+    "sku": "10473.019",
+    "name": "YAB BIO FRAISE",
+    "category": "Positif"
+  },
+  {
+    "sku": "8442.102",
+    "name": "TOPPING KIT KAT BALL",
+    "category": "Positif"
+  },
+  {
+    "sku": "5746.058",
+    "name": "OEUF COQUILLE LABEL",
+    "category": "Positif"
+  },
+  {
+    "sku": "28.092",
+    "name": "OIGNONS EMINCES 2",
+    "category": "Positif"
+  },
+  {
+    "sku": "4552.116",
+    "name": "SCE MCEXT MCBACON",
+    "category": "Positif"
+  },
+  {
+    "sku": "8092.005",
+    "name": "SAUCE MC CHICKEN",
+    "category": "Positif"
+  },
+  {
+    "sku": "55.344",
+    "name": "SAUCE BIG MAC X 12",
+    "category": "Positif"
+  },
+  {
+    "sku": "10748.016",
+    "name": "SCE BIG ROSTI",
+    "category": "Positif"
+  },
+  {
+    "sku": "19774.006",
+    "name": "TOPPING BOBAS FRAISE",
+    "category": "Positif"
+  },
+  {
+    "sku": "20341.000",
+    "name": "SCE ROYALE BOUTEILLE",
+    "category": "Positif"
+  },
+  {
+    "sku": "20432.000",
+    "name": "CANETTE SPIDERMAN",
+    "category": "Positif"
+  },
+  {
+    "sku": "4552.120",
+    "name": "SAUCE GRAND CHICAGO",
+    "category": "Positif"
+  },
+  {
+    "sku": "17827.002",
+    "name": "PICKLES OIGNON JALAP",
+    "category": "Positif"
+  },
+  {
+    "sku": "11580.136",
+    "name": "SAC SALADE SDD",
+    "category": "Positif"
+  },
+  {
+    "sku": "11580.170",
+    "name": "SAC CROQUEZ MONDE",
+    "category": "Positif"
+  },
+  {
+    "sku": "193.676",
+    "name": "SERVIETTE",
+    "category": "Positif"
+  },
+  {
+    "sku": "335.188",
+    "name": "COUVERCLE GOB SUNDAE",
+    "category": "Positif"
+  },
+  {
+    "sku": "261.259",
+    "name": "GOBELET SUNDAE FIBRE",
+    "category": "Positif"
+  },
+  {
+    "sku": "6373.559",
+    "name": "GOBELET MC FLURRY",
+    "category": "Positif"
+  },
+  {
+    "sku": "16192.000",
+    "name": "COUVERCLE ESPRESSO",
+    "category": "Positif"
+  },
+  {
+    "sku": "187.647",
+    "name": "GOBELET 0,4L CAFE",
+    "category": "Sec"
+  },
+  {
+    "sku": "232.710",
+    "name": "GOBELET 0,2L CAFE",
+    "category": "Sec"
+  },
+  {
+    "sku": "18427.001",
+    "name": "GOBELET 0.25L",
+    "category": "Sec"
+  },
+  {
+    "sku": "18487.000",
+    "name": "GOBELET 0.4L",
+    "category": "Sec"
+  },
+  {
+    "sku": "18488.000",
+    "name": "GOBELET 0.5L",
+    "category": "Sec"
+  },
+  {
+    "sku": "397.065",
+    "name": "PORTE GOBELET SECABL",
+    "category": "Sec"
+  },
+  {
+    "sku": "14306.004",
+    "name": "COUVERCLE FIBRE 3",
+    "category": "Sec"
+  },
+  {
+    "sku": "13117.004",
+    "name": "SAUCE FRITE",
+    "category": "Sec"
+  },
+  {
+    "sku": "45.291",
+    "name": "KETCHUP DOSETTE",
+    "category": "Sec"
+  },
+  {
+    "sku": "8158.029",
+    "name": "SAUCE CREAMY DELUXE",
+    "category": "Sec"
+  },
+  {
+    "sku": "16051.007",
+    "name": "BOITE FLAVOR FRIES",
+    "category": "Sec"
+  },
+  {
+    "sku": "15723.010",
+    "name": "BOITE MOY FRITE SDD",
+    "category": "Sec"
+  },
+  {
+    "sku": "15725.008",
+    "name": "BOITE GRANDE FRITE S",
+    "category": "Sec"
+  },
+  {
+    "sku": "69.113",
+    "name": "TOPPING CARAMEL",
+    "category": "Sec"
+  },
+  {
+    "sku": "65.064",
+    "name": "TOPPING CHOCOLAT",
+    "category": "Sec"
+  },
+  {
+    "sku": "17.101",
+    "name": "SACHET CACAHUETES 7",
+    "category": "Sec"
+  },
+  {
+    "sku": "10927.065",
+    "name": "COUVERCLE FIBRE CAFE",
+    "category": "Sec"
+  },
+  {
+    "sku": "18489.000",
+    "name": "GOBELET 0.07L",
+    "category": "Sec"
+  },
+  {
+    "sku": "2679.079",
+    "name": "KETCHUP BIB CUISINE",
+    "category": "Sec"
+  },
+  {
+    "sku": "26.054",
+    "name": "MOUTARDE VRAC20X750G",
+    "category": "Sec"
+  },
+  {
+    "sku": "63.047",
+    "name": "CORNICHON X6,8 KG",
+    "category": "Sec"
+  },
+  {
+    "sku": "195.212",
+    "name": "FEUILLE CUISSON",
+    "category": "Sec"
+  },
+  {
+    "sku": "195.211",
+    "name": "LINER TIROIR UHC",
+    "category": "Sec"
+  },
+  {
+    "sku": "16667.000",
+    "name": "SEL ALIM. SEAU 5KG",
+    "category": "Sec"
+  },
+  {
+    "sku": "3874.056",
+    "name": "FOURCHETTE FLAVOR2",
+    "category": "Sec"
+  },
+  {
+    "sku": "127.910",
+    "name": "SACHET FRITE SDD",
+    "category": "Sec"
+  },
+  {
+    "sku": "350.176",
+    "name": "CUILLERE EN BOIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "1007.150",
+    "name": "CAFE SZF RA IP",
+    "category": "Sec"
+  },
+  {
+    "sku": "1219.094",
+    "name": "DECA SACHET RA IP",
+    "category": "Sec"
+  },
+  {
+    "sku": "2047.101",
+    "name": "SUCRE BUCHETTE 3G",
+    "category": "Sec"
+  },
+  {
+    "sku": "43.138",
+    "name": "DOSETTE SEL 0,8G X20",
+    "category": "Sec"
+  },
+  {
+    "sku": "3758.104",
+    "name": "MONBANA STICKS",
+    "category": "Sec"
+  },
+  {
+    "sku": "410.004",
+    "name": "SCE MOUTARDE X125",
+    "category": "Sec"
+  },
+  {
+    "sku": "3040.093",
+    "name": "SCE CURRY X125",
+    "category": "Sec"
+  },
+  {
+    "sku": "409.031",
+    "name": "SCE CHINOISE X125",
+    "category": "Sec"
+  },
+  {
+    "sku": "143.449",
+    "name": "SAC E +",
+    "category": "Sec"
+  },
+  {
+    "sku": "19300.000",
+    "name": "OIGNONS FRITS 2",
+    "category": "Sec"
+  },
+  {
+    "sku": "56.072",
+    "name": "OIGNONS REG",
+    "category": "Sec"
+  },
+  {
+    "sku": "177.019",
+    "name": "SIROP SHAKE CAFE",
+    "category": "Sec"
+  },
+  {
+    "sku": "14918.000",
+    "name": "SIROP SHAKE FRAISE",
+    "category": "Sec"
+  },
+  {
+    "sku": "14964.000",
+    "name": "SIROP SHAKE VANILLE",
+    "category": "Sec"
+  },
+  {
+    "sku": "1344.029",
+    "name": "THE EARL GREY BIO",
+    "category": "Sec"
+  },
+  {
+    "sku": "13315.001",
+    "name": "THE VERT MENTHE BIO",
+    "category": "Sec"
+  },
+  {
+    "sku": "13469.001",
+    "name": "INFUSION CITRON GING",
+    "category": "Sec"
+  },
+  {
+    "sku": "166.574",
+    "name": "BOITE APPLE PIE",
+    "category": "Sec"
+  },
+  {
+    "sku": "11512.003",
+    "name": "MINI COOKIES",
+    "category": "Sec"
+  },
+  {
+    "sku": "2937.124",
+    "name": "SACHET PATISSERIE",
+    "category": "Sec"
+  },
+  {
+    "sku": "319.107",
+    "name": "COUTEAU EN BOIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "353.146",
+    "name": "FOURCHETTE EN BOIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "14148.034",
+    "name": "BOITE SALADE",
+    "category": "Sec"
+  },
+  {
+    "sku": "10958.848",
+    "name": "SAC SOS A",
+    "category": "Sec"
+  },
+  {
+    "sku": "13229.587",
+    "name": "SAC SOS B",
+    "category": "Sec"
+  },
+  {
+    "sku": "15849.088",
+    "name": "SAC C SDD",
+    "category": "Sec"
+  },
+  {
+    "sku": "3841.056",
+    "name": "PETIT TUBE 85ML SDD",
+    "category": "Sec"
+  },
+  {
+    "sku": "3842.030",
+    "name": "COUVERCLE MEMBRANE T",
+    "category": "Sec"
+  },
+  {
+    "sku": "3842.050",
+    "name": "COUV TRANSP TUBE",
+    "category": "Sec"
+  },
+  {
+    "sku": "261.295",
+    "name": "PETIT GOB SUNDAE",
+    "category": "Sec"
+  },
+  {
+    "sku": "14920.010",
+    "name": "GOBELET FRAPPE",
+    "category": "Sec"
+  },
+  {
+    "sku": "223.535",
+    "name": "PAILLE PAPIER FRAPPE",
+    "category": "Sec"
+  },
+  {
+    "sku": "7311.092",
+    "name": "BOITE DUO MACARON",
+    "category": "Sec"
+  },
+  {
+    "sku": "730.053",
+    "name": "TOUILLETTE",
+    "category": "Sec"
+  },
+  {
+    "sku": "3237.161",
+    "name": "BEURRE LIQUIDE 2",
+    "category": "Sec"
+  },
+  {
+    "sku": "17302.013",
+    "name": "ETIQUETTE LIVRAISON",
+    "category": "Sec"
+  },
+  {
+    "sku": "3496.056",
+    "name": "MELANGE SEL POIVRE",
+    "category": "Sec"
+  },
+  {
+    "sku": "13719.006",
+    "name": "TOPPING POPCORN",
+    "category": "Sec"
+  },
+  {
+    "sku": "16418.000",
+    "name": "SCE COUPELLE WASABI",
+    "category": "Sec"
+  },
+  {
+    "sku": "9008.004",
+    "name": "TOPPING BACI",
+    "category": "Sec"
+  },
+  {
+    "sku": "19803.001",
+    "name": "SIROP CITRON",
+    "category": "Sec"
+  },
+  {
+    "sku": "16415.001",
+    "name": "SCE HARISSA",
+    "category": "Sec"
+  },
+  {
+    "sku": "16412.007",
+    "name": "SPICY BBQ CHICAGO",
+    "category": "Sec"
+  },
+  {
+    "sku": "285.874",
+    "name": "WRAP CHEESEBURGER",
+    "category": "Sec"
+  },
+  {
+    "sku": "284.170",
+    "name": "WRAP HAMBURGER",
+    "category": "Sec"
+  },
+  {
+    "sku": "17147.002",
+    "name": "WRAP MC CROQ",
+    "category": "Sec"
+  },
+  {
+    "sku": "286.337",
+    "name": "WRAP MCFISH",
+    "category": "Sec"
+  },
+  {
+    "sku": "1180.272",
+    "name": "WRAP FOF",
+    "category": "Sec"
+  },
+  {
+    "sku": "284.191",
+    "name": "WRAP PETIT PLAISIR",
+    "category": "Sec"
+  },
+  {
+    "sku": "284.266",
+    "name": "WRAP PTIT WRAP",
+    "category": "Sec"
+  },
+  {
+    "sku": "17229.000",
+    "name": "WRAP ROYAL",
+    "category": "Sec"
+  },
+  {
+    "sku": "1179.427",
+    "name": "WRAP DB CHEESEBURGER",
+    "category": "Sec"
+  },
+  {
+    "sku": "1798.295",
+    "name": "WRAP MC CHICKEN",
+    "category": "Sec"
+  },
+  {
+    "sku": "1833.213",
+    "name": "WRAP MC WRAP",
+    "category": "Sec"
+  },
+  {
+    "sku": "15924.017",
+    "name": "WRAP 280 EXTREME",
+    "category": "Sec"
+  },
+  {
+    "sku": "15925.005",
+    "name": "WRAP TASTY CBO",
+    "category": "Sec"
+  },
+  {
+    "sku": "285.912",
+    "name": "WRAP HB CB DCB",
+    "category": "Sec"
+  },
+  {
+    "sku": "10618.053",
+    "name": "WRAP GENERIQUE",
+    "category": "Sec"
+  },
+  {
+    "sku": "15924.018",
+    "name": "WRAP CROQUEZ LEMONDE",
+    "category": "Sec"
+  },
+  {
+    "sku": "20363.001",
+    "name": "WRAP MCDEAL",
+    "category": "Sec"
+  },
+  {
+    "sku": "2589.489",
+    "name": "HUILE DE FRITURE 2X7",
+    "category": "Sec"
+  },
+  {
+    "sku": "14795.001",
+    "name": "CARTON COLLECTE",
+    "category": "Sec"
+  },
+  {
+    "sku": "215.230",
+    "name": "MCD MD CONC",
+    "category": "Sec"
+  },
+  {
+    "sku": "2437.194",
+    "name": "HA NE'TT PLGE CONC",
+    "category": "Sec"
+  },
+  {
+    "sku": "304.473",
+    "name": "DR DETERGENT",
+    "category": "Sec"
+  },
+  {
+    "sku": "3014.107",
+    "name": "FC NETTSOL CONC",
+    "category": "Sec"
+  },
+  {
+    "sku": "2858.150",
+    "name": "MOUSSE WC DESINFECT",
+    "category": "Sec"
+  },
+  {
+    "sku": "225.100",
+    "name": "NETTOYANT VITRE",
+    "category": "Sec"
+  },
+  {
+    "sku": "307.101",
+    "name": "EASY WASH EXTRA",
+    "category": "Sec"
+  },
+  {
+    "sku": "4125.062",
+    "name": "FILM PLASTIQUE 30",
+    "category": "Sec"
+  },
+  {
+    "sku": "16544.004",
+    "name": "CACHE BARBE",
+    "category": "Sec"
+  },
+  {
+    "sku": "1714.059",
+    "name": "FILETA CHEVEUX",
+    "category": "Sec"
+  },
+  {
+    "sku": "871.078",
+    "name": "TABLIER JET.BL X100",
+    "category": "Sec"
+  },
+  {
+    "sku": "334.409",
+    "name": "LAVETTE BL 42 8X35,5",
+    "category": "Sec"
+  },
+  {
+    "sku": "340.051",
+    "name": "SERVIETTE GRILL X40",
+    "category": "Sec"
+  },
+  {
+    "sku": "17293.006",
+    "name": "SACHET NUGGETS X9",
+    "category": "Sec"
+  },
+  {
+    "sku": "17327.010",
+    "name": "SACHET 6 NUG",
+    "category": "Sec"
+  },
+  {
+    "sku": "3723.344",
+    "name": "SACHET 4 NUGGETS",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.327",
+    "name": "RLX EPSON DRIVE BLEU",
+    "category": "Sec"
+  },
+  {
+    "sku": "2121.185",
+    "name": "ROULEAUX STICKY",
+    "category": "Sec"
+  },
+  {
+    "sku": "2121.387",
+    "name": "ROULEAUX THERMIQUES",
+    "category": "Sec"
+  },
+  {
+    "sku": "357.161",
+    "name": "SAC POUB TRANS 130L",
+    "category": "Sec"
+  },
+  {
+    "sku": "357.133",
+    "name": "RU SAC PB TRANS 60L",
+    "category": "Sec"
+  },
+  {
+    "sku": "289.552",
+    "name": "BOITE A PARTAGER SD",
+    "category": "Sec"
+  },
+  {
+    "sku": "11596.019",
+    "name": "WRAP EGG MCMUFFIN",
+    "category": "Sec"
+  },
+  {
+    "sku": "15924.016",
+    "name": "WRAP LARGE FISH",
+    "category": "Sec"
+  },
+  {
+    "sku": "3688.140",
+    "name": "WRAP BIG MAC",
+    "category": "Sec"
+  },
+  {
+    "sku": "18071.000",
+    "name": "RLX DLC IMPZEBRA",
+    "category": "Sec"
+  },
+  {
+    "sku": "2121.956",
+    "name": "RLX TPE PORTATIF",
+    "category": "Sec"
+  },
+  {
+    "sku": "6025.057",
+    "name": "NAPPERONS",
+    "category": "Sec"
+  },
+  {
+    "sku": "4081.101",
+    "name": "BOBINES ESSUIE MAIN",
+    "category": "Sec"
+  },
+  {
+    "sku": "4131.105",
+    "name": "LIQUIDE RINCAGE RU",
+    "category": "Sec"
+  },
+  {
+    "sku": "585.160",
+    "name": "PAPIER TOILETTE",
+    "category": "Sec"
+  },
+  {
+    "sku": "1.915",
+    "name": "PAIN REG BB FRAIS 2",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.176",
+    "name": "STICKER DOUBLE",
+    "category": "Sec"
+  },
+  {
+    "sku": "3.681",
+    "name": "PAIN BM BB FRAIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.178",
+    "name": "STICKER POULET",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.179",
+    "name": "STICKER BACON",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.181",
+    "name": "STICKER VARIATION",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.750",
+    "name": "STICKER BOI.LAD LONG",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.924",
+    "name": "RU STICKER ORANGE 3",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.184",
+    "name": "STICKER COCA",
+    "category": "Sec"
+  },
+  {
+    "sku": "2820.131",
+    "name": "RU STICKER JAUNE",
+    "category": "Sec"
+  },
+  {
+    "sku": "16901.015",
+    "name": "RU GOBELET 025L N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16820.025",
+    "name": "RU GOBELET 04L N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16820.024",
+    "name": "RU GOBELET 05L N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16822.000",
+    "name": "RU FOURCHETTE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16823.000",
+    "name": "RU COUTEAU N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16824.001",
+    "name": "RU CUILLERE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16905.012",
+    "name": "RU BOL NUG X4 N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16903.003",
+    "name": "RU GOB 0,4 CAFE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "18233.003",
+    "name": "RU BOL FLURRY N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16905.011",
+    "name": "RU BOL NUG X6/9 N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16903.004",
+    "name": "RU GOB 0,2 CAFE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "17030.004",
+    "name": "RU PETITE FRITE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "17029.004",
+    "name": "RU MOYENNE FRITE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "17028.004",
+    "name": "RU GRANDE FRITE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "17025.003",
+    "name": "RU GOB SUNDAE",
+    "category": "Sec"
+  },
+  {
+    "sku": "17167.002",
+    "name": "RU GOB PTIT SUNDAE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16820.026",
+    "name": "RU GOB EXPRESSO N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16906.005",
+    "name": "RU 4/6/9 MCN COUV N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16905.006",
+    "name": "RU PART&SALAD BOL N",
+    "category": "Sec"
+  },
+  {
+    "sku": "16907.006",
+    "name": "RU COUV PARTAGE N",
+    "category": "Sec"
+  },
+  {
+    "sku": "6691.942",
+    "name": "BOITE HM P1 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19999.029",
+    "name": "BOITE HM SPIDERMAN26",
+    "category": "Sec"
+  },
+  {
+    "sku": "19878.047",
+    "name": "L1 CAPSULES 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19878.048",
+    "name": "L2 CAPSULES 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19878.049",
+    "name": "L3 CAPSULES 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19878.050",
+    "name": "L4 CAPSULES 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19879.006",
+    "name": "L2 SCHTROUMF PARESSE",
+    "category": "Sec"
+  },
+  {
+    "sku": "19787.000",
+    "name": "P1 PIGEON MIXED G26",
+    "category": "Sec"
+  },
+  {
+    "sku": "19836.310",
+    "name": "P1 FIFA SQUISHMALLOW",
+    "category": "Sec"
+  },
+  {
+    "sku": "19836.313",
+    "name": "P2 FIFA SQUISHMALLOW",
+    "category": "Sec"
+  },
+  {
+    "sku": "19836.316",
+    "name": "P3 FIFA SQUISHMALLOW",
+    "category": "Sec"
+  },
+  {
+    "sku": "19836.319",
+    "name": "P4 FIFA SQUISHMALLOW",
+    "category": "Sec"
+  },
+  {
+    "sku": "19836.344",
+    "name": "M1 MASCOT FIFA SQUIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.208",
+    "name": "P4 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.294",
+    "name": "P9 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.331",
+    "name": "MIX1 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.332",
+    "name": "MIX2 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.334",
+    "name": "MIX4 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.333",
+    "name": "MIX3 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19931.335",
+    "name": "MIX5 HM SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "19604.272",
+    "name": "P4 ZEBRE PLAY 25",
+    "category": "Sec"
+  },
+  {
+    "sku": "11880.004",
+    "name": "BONBON HAPPY AVENTUR",
+    "category": "Sec"
+  },
+  {
+    "sku": "14872.005",
+    "name": "BALLON ANNIVERSAIRE",
+    "category": "Sec"
+  },
+  {
+    "sku": "14872.027",
+    "name": "BALLONS FIFA",
+    "category": "Sec"
+  },
+  {
+    "sku": "202.414",
+    "name": "TIGES BALLON CARTON",
+    "category": "Sec"
+  },
+  {
+    "sku": "5650.043",
+    "name": "CRAYON COLOR 2022",
+    "category": "Sec"
+  },
+  {
+    "sku": "3190.100",
+    "name": "30 FILTRES FRIT.LOV",
+    "category": "Sec"
+  },
+  {
+    "sku": "19059.001",
+    "name": "RANGE CABLE FID",
+    "category": "Sec"
+  },
+  {
+    "sku": "20202.001",
+    "name": "BOB FIFA FID",
+    "category": "Sec"
+  },
+  {
+    "sku": "19895.110",
+    "name": "SET DE 3 PINS FID",
+    "category": "Sec"
+  },
+  {
+    "sku": "18608.008",
+    "name": "MINI BALLON FID 2025",
+    "category": "Sec"
+  },
+  {
+    "sku": "20327.000",
+    "name": "SERVIETTES DE PLAGE",
+    "category": "Sec"
+  },
+  {
+    "sku": "19895.054",
+    "name": "CUP FIFA 2026",
+    "category": "Sec"
+  },
+  {
+    "sku": "19739.016",
+    "name": "BRACELETS PDC 26",
+    "category": "Sec"
+  },
+  {
+    "sku": "18464.017",
+    "name": "BTE ADULTE SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "20229.004",
+    "name": "FIGURINES SPIDERMAN",
+    "category": "Sec"
+  },
+  {
+    "sku": "16787.000",
+    "name": "JEU CONSTRUCTION CEF",
+    "category": "Sec"
+  },
+  {
+    "sku": "16787.003",
+    "name": "DOMINOS CEF ANNIV 23",
+    "category": "Sec"
+  },
+  {
+    "sku": "16787.005",
+    "name": "PACK CONSO ANIM TMS",
+    "category": "Sec"
+  },
+  {
+    "sku": "3238.278",
+    "name": "PACK CONSO ANIM ANNI",
+    "category": "Sec"
+  },
+  {
+    "sku": "16787.009",
+    "name": "PACK CONSO GOUTER DE",
+    "category": "Sec"
+  },
+  {
+    "sku": "18867.002",
+    "name": "PANSEMENTS",
+    "category": "Sec"
+  },
+  {
+    "sku": "15505.037",
+    "name": "MASQUE DE PROTECTION",
+    "category": "Sec"
+  },
+  {
+    "sku": "80000.698",
+    "name": "ENV.DEPOT 1/2 FORMAT",
+    "category": "Sec"
+  },
+  {
+    "sku": "14176.002",
+    "name": "TESTEUR CHLORE 3",
+    "category": "Sec"
+  },
+  {
+    "sku": "9122.303",
+    "name": "BOITE 5 RAMETTES A4",
+    "category": "Sec"
+  },
+  {
+    "sku": "1916.015",
+    "name": "DIVERSEY TESTEUR DR",
+    "category": "Sec"
+  },
+  {
+    "sku": "19.264",
+    "name": "MEGABIB COCA HIGH RA",
+    "category": "Sec"
+  },
+  {
+    "sku": "19858.001",
+    "name": "CHERRY COKE ZERO BIB",
+    "category": "Sec"
+  },
+  {
+    "sku": "7870.065",
+    "name": "OASIS",
+    "category": "Sec"
+  },
+  {
+    "sku": "168.387",
+    "name": "SPRITE ZERO BIB 19L",
+    "category": "Sec"
+  },
+  {
+    "sku": "5054.020",
+    "name": "COCA ZERO BIB HR 19L",
+    "category": "Sec"
+  },
+  {
+    "sku": "5743.105",
+    "name": "LIPTON ICE TEA ZERO",
+    "category": "Sec"
+  },
+  {
+    "sku": "5743.117",
+    "name": "FUZE TEA BIB",
+    "category": "Sec"
+  },
+  {
+    "sku": "21.429",
+    "name": "FANTA BIB 19L HR",
+    "category": "Sec"
+  }
+]
