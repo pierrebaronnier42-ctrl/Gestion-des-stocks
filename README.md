@@ -1,8 +1,10 @@
-## Nouveautés v1.55
+## Nouveautés v1.60
 
-- Ajout d’un filtre **Toutes les zones / zone de stockage** dans Produits.
-- Ajout d’un tri **Zone de stockage** dans le catalogue produits.
-- Le tri par zone conserve l’ordre de séquence à l’intérieur de chaque zone.
+- Retour à la version **sans conversion des BC/BL en tableau** : les documents restent consultables comme documents/PDF.
+- Envoi des gros documents vers **Supabase Storage** au lieu de les garder dans `app_data`.
+- La sauvegarde principale reste légère : elle garde les liens des fichiers stockés.
+- Si Supabase Storage n’est pas configuré, tentative d’envoi JSON direct jusqu’à environ 12 Mo, puis sauvegarde allégée en secours.
+- Les fichiers lourds ne sont pas conservés dans les backups locaux.
 
 Version v1.48 - backups et points de restauration
 
@@ -22,7 +24,7 @@ Cette version est prévue pour être publiée sur GitHub Pages et synchronisée 
 - Fournisseurs
 - Paramètres avec changement de logo
 - Backups / points de restauration pour revenir à une sauvegarde précédente
-- Synchronisation Supabase via la table `app_data`
+- Synchronisation Supabase via la table `app_data` et stockage des documents lourds dans le bucket `app-documents`
 
 ## Configuration Supabase
 
@@ -35,39 +37,19 @@ window.SUPABASE_CONFIG = {
 };
 ```
 
-## Table à créer dans Supabase
+## Table et stockage à créer dans Supabase
 
-Dans Supabase, aller dans **SQL Editor**, puis exécuter :
+Dans Supabase, aller dans **SQL Editor**, puis exécuter le contenu complet du fichier :
 
-```sql
-create table if not exists app_data (
-  id text primary key,
-  data jsonb not null,
-  updated_at timestamptz default now()
-);
-
-alter table app_data enable row level security;
-
-drop policy if exists "app_data_select" on app_data;
-drop policy if exists "app_data_insert" on app_data;
-drop policy if exists "app_data_update" on app_data;
-
-create policy "app_data_select"
-on app_data for select
-to anon
-using (true);
-
-create policy "app_data_insert"
-on app_data for insert
-to anon
-with check (true);
-
-create policy "app_data_update"
-on app_data for update
-to anon
-using (true)
-with check (true);
+```text
+supabase-setup.sql
 ```
+
+Ce script crée :
+
+- la table `app_data` pour les données principales ;
+- le bucket `app-documents` pour les documents lourds ;
+- les règles RLS nécessaires pour lire et envoyer les fichiers depuis l’application.
 
 ## Publication avec GitHub Pages
 
@@ -290,16 +272,11 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Message clair si un PDF n’est plus disponible sur l’appareil.
 
 
-## Version 1.58
-- Conversion automatique des documents BC/BL/tickets scannés en tableaux de données légers.
-- Les images/PDF lourds ne sont plus conservés après scan/import ; seules les métadonnées et lignes extraites sont sauvegardées.
-- Les liens PDF des rapports génèrent un PDF tableau léger.
+## Version 1.60
 
-
-## Version 1.59
-
-- Le ticket température n’est plus converti en tableau de données.
-- Les BC et BL restent convertis en tableaux légers.
-- Le ticket température reste conservé comme document original, consultable/téléchargeable en PDF.
-- Le bouton “Convertir tableau” n’apparaît plus pour le ticket température.
-- Les rapports continuent de proposer le ticket température en lien PDF.
+- Retour à la version sans documents convertis en tableau.
+- Les BC, BL et tickets température restent des documents/PDF.
+- Ajout du stockage Supabase Storage pour envoyer des fichiers lourds sans alourdir `app_data`.
+- Le bucket utilisé est `app-documents`.
+- Les fichiers stockés dans Supabase sont récupérés uniquement quand on ouvre/télécharge le PDF.
+- Si le bucket n’est pas disponible, l’application tente encore un envoi direct plus élevé, puis bascule en mode allégé si Supabase refuse.

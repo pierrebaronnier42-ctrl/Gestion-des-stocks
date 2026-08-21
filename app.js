@@ -5,7 +5,7 @@ const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const CLOUD_META_STORAGE_KEY = 'gestion-stock-web-v1-cloud-meta';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.59.0-temperature-ticket-original';
+const APP_VERSION = '1.60.0-no-table-storage-upload';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -401,16 +401,22 @@ const pages = [
 
 function normalizeScanPage(page = {}, fallback = {}, index = 0) {
   const fileData = page.fileData || fallback.fileData || '';
-  const hasMeta = Boolean(page.id || page.fileName || page.fileType || fallback.fileName || fallback.fileType || page.fileMissing || page.storageStatus);
+  const storagePath = page.storagePath || fallback.storagePath || '';
+  const storageBucket = page.storageBucket || fallback.storageBucket || '';
+  const hasStorage = Boolean(storagePath);
+  const hasMeta = Boolean(page.id || page.fileName || page.fileType || fallback.fileName || fallback.fileType || page.fileMissing || page.storageStatus || hasStorage);
   if (!fileData && !hasMeta) return null;
   return {
     id: page.id || `${fallback.id || uid()}-page-${index + 1}`,
     fileName: page.fileName || fallback.fileName || `page-${index + 1}.jpg`,
     fileType: page.fileType || fallback.fileType || 'image/jpeg',
     fileData,
-    fileMissing: Boolean(page.fileMissing || (!fileData && hasMeta)),
-    storageStatus: page.storageStatus || (!fileData && hasMeta ? 'metadata-only' : ''),
+    storagePath,
+    storageBucket,
+    storageStatus: page.storageStatus || (hasStorage ? 'supabase-storage' : (!fileData && hasMeta ? 'metadata-only' : '')),
+    fileMissing: Boolean(page.fileMissing || (!fileData && hasMeta && !hasStorage)),
     fileRemovedReason: page.fileRemovedReason || '',
+    storageUploadedAt: page.storageUploadedAt || '',
     scannedAt: page.scannedAt || fallback.scannedAt || new Date().toISOString()
   };
 }
@@ -422,7 +428,7 @@ function normalizeScannedDocumentRecord(scan = {}) {
     const legacyPage = normalizeScanPage({}, scan, 0);
     if (legacyPage) pages = [legacyPage];
   }
-  const normalized = { ...scan, pages, documentTable: normalizeDocumentTable(scan.documentTable || {}) };
+  const normalized = { ...scan, pages };
   delete normalized.fileData;
   delete normalized.fileName;
   delete normalized.fileType;
@@ -445,64 +451,6 @@ function scanPages(scan = {}) {
 
 function scanPageCount(scan = {}) {
   return scanPages(scan).length;
-}
-
-function normalizeDocumentTable(table = {}) {
-  const rows = Array.isArray(table.rows) ? table.rows.map((row, index) => ({
-    page: Number(row.page || 1),
-    line: Number(row.line || index + 1),
-    reference: String(row.reference || '').trim(),
-    designation: String(row.designation || '').trim(),
-    conditionnement: String(row.conditionnement || '').trim(),
-    quantite: String(row.quantite || '').trim(),
-    temperature: String(row.temperature || '').trim(),
-    complement: String(row.complement || '').trim(),
-    source: String(row.source || '').trim()
-  })).filter(row => row.reference || row.designation || row.quantite || row.temperature || row.source) : [];
-  return {
-    version: table.version || '1',
-    extractedAt: table.extractedAt || '',
-    mode: table.mode || 'table-light',
-    pageCount: Number(table.pageCount || 0),
-    rowCount: Number(table.rowCount || rows.length),
-    fileNames: Array.isArray(table.fileNames) ? table.fileNames.map(name => String(name || '')).filter(Boolean) : [],
-    warning: table.warning || '',
-    rawText: String(table.rawText || ''),
-    rows
-  };
-}
-
-function scanDocumentTable(scan = {}) {
-  const table = normalizeDocumentTable(scan.documentTable || {});
-  return table.rows.length || table.rawText ? table : null;
-}
-
-function lightweightScanPage(page = {}, reason = 'Document converti en tableau léger') {
-  const hasFile = Boolean(page.fileData);
-  return {
-    ...page,
-    fileData: '',
-    fileMissing: true,
-    storageStatus: 'table-converted',
-    fileRemovedReason: reason,
-    originalFileSize: hasFile ? String(page.fileData || '').length : (page.originalFileSize || 0)
-  };
-}
-
-function documentTableSummary(scan = {}) {
-  const table = scanDocumentTable(scan);
-  if (!table?.rows?.length) return '<span class="muted">Tableau non généré</span>';
-  return `<span class="badge success">Tableau · ${escapeHtml(table.rows.length)} ligne(s)</span>`;
-}
-
-function receiptDocumentStorageSummary(scan = {}) {
-  if (scan?.docType === 'temperature') {
-    const pages = scanPages(scan);
-    return pages.some(page => page.fileData)
-      ? '<span class="badge info">Ticket original conservé</span>'
-      : '<span class="badge warning">Ticket original non disponible</span>';
-  }
-  return documentTableSummary(scan);
 }
 
 function migrateUser(user = {}) {
@@ -908,29 +856,28 @@ function ensureInventoryCatalog(targetState) {
 
 function stateWithoutHeavyScanData(sourceState = state) {
   const clone = JSON.parse(JSON.stringify(sourceState));
-  const stripPages = list => (list || []).map(scan => {
-    if (scan?.docType === 'temperature') {
-      // Exception demandée : le ticket température reste un document original,
-      // il n'est pas transformé en tableau et n'est pas supprimé lors de l'allègement.
-      return normalizeScannedDocumentRecord(scan);
-    }
-    return {
-      ...scan,
-      pages: scanPages(scan).map(page => ({
-        ...page,
-        fileData: '',
-        fileMissing: true,
-        storageStatus: 'metadata-only',
-        fileRemovedReason: 'Document lourd non conservé localement'
-      }))
-    };
-  });
+  const stripPages = list => (list || []).map(scan => ({
+    ...scan,
+    pages: scanPages(scan).map(page => ({
+      ...page,
+      fileData: '',
+      fileMissing: !page.storagePath,
+      storageBucket: page.storageBucket || (page.storagePath ? CLOUD_STORAGE_BUCKET : ''),
+      storageStatus: page.storagePath ? 'supabase-storage' : 'metadata-only',
+      fileRemovedReason: page.storagePath ? 'Document stocké dans Supabase Storage' : 'Document lourd non conservé localement'
+    }))
+  }));
   clone.scannedOrders = stripPages(clone.scannedOrders);
   clone.scannedReceipts = stripPages(clone.scannedReceipts);
   return clone;
 }
 
-const CLOUD_HEAVY_SCAN_LIMIT = 1500000;
+const LOCAL_HEAVY_SCAN_LIMIT = 1500000;
+const CLOUD_DIRECT_JSON_LIMIT = 12000000;
+const CLOUD_HEAVY_SCAN_LIMIT = CLOUD_DIRECT_JSON_LIMIT;
+const CLOUD_STORAGE_BUCKET = 'app-documents';
+const CLOUD_STORAGE_UPLOAD_THRESHOLD = 180000;
+const storageObjectDataUrlCache = new Map();
 
 function scanHeavyDataSize(sourceState = state) {
   const allScans = [...(sourceState.scannedOrders || []), ...(sourceState.scannedReceipts || [])];
@@ -950,8 +897,152 @@ function buildCloudUploadState(sourceState = state, options = {}) {
   return {
     data: useLightPayload ? stateWithoutHeavyScanData(sourceState) : sourceState,
     light: useLightPayload,
-    heavyBytes
+    heavyBytes,
+    storage: false
   };
+}
+
+function safeStorageName(value = 'document') {
+  return String(value || 'document')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 90) || 'document';
+}
+
+function storagePathForScanPage(kind, scan = {}, page = {}, index = 0) {
+  const datePart = safeStorageName(scan.date || today());
+  const scanPart = safeStorageName(scan.id || `${kind}-${scan.type || scan.docType || 'document'}`);
+  const pagePart = safeStorageName(page.id || `page-${index + 1}`);
+  const original = safeStorageName(page.fileName || `page-${index + 1}`);
+  return `${datePart}/${safeStorageName(kind)}/${scanPart}/${pagePart}-${original}`;
+}
+
+function dataUrlToBlob(dataUrl = '') {
+  const parts = String(dataUrl || '').split(',');
+  if (parts.length < 2) throw new Error('Fichier invalide');
+  const header = parts[0] || '';
+  const mime = (header.match(/data:([^;]+);base64/i) || [])[1] || 'application/octet-stream';
+  const binary = atob(parts.slice(1).join(','));
+  const size = binary.length;
+  const chunks = [];
+  for (let offset = 0; offset < size; offset += 8192) {
+    const slice = binary.slice(offset, offset + 8192);
+    const bytes = new Uint8Array(slice.length);
+    for (let i = 0; i < slice.length; i += 1) bytes[i] = slice.charCodeAt(i);
+    chunks.push(bytes);
+  }
+  return new Blob(chunks, { type: mime });
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Lecture du fichier impossible'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function supabaseStorageObjectUrl(path) {
+  const encodedPath = String(path || '').split('/').map(part => encodeURIComponent(part)).join('/');
+  return `${supabaseClient.url}/storage/v1/object/${encodeURIComponent(CLOUD_STORAGE_BUCKET)}/${encodedPath}`;
+}
+
+async function supabaseStorageRequest(path, options = {}) {
+  if (!cloudReady || !supabaseClient) throw new Error('Supabase non configuré');
+  const response = await fetch(supabaseStorageObjectUrl(path), {
+    ...options,
+    headers: {
+      apikey: supabaseClient.anonKey,
+      Authorization: `Bearer ${supabaseClient.anonKey}`,
+      ...(options.headers || {})
+    }
+  });
+  if (!response.ok) throw new Error(await readSupabaseError(response));
+  return response;
+}
+
+async function uploadScanPageToSupabaseStorage(kind, scan, page, index = 0) {
+  if (!page?.fileData || !String(page.fileData).startsWith('data:')) return false;
+  const path = page.storagePath || storagePathForScanPage(kind, scan, page, index);
+  const blob = dataUrlToBlob(page.fileData);
+  await supabaseStorageRequest(path, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': page.fileType || blob.type || 'application/octet-stream',
+      'x-upsert': 'true'
+    },
+    body: blob
+  });
+  page.storagePath = path;
+  page.storageBucket = CLOUD_STORAGE_BUCKET;
+  page.storageStatus = 'supabase-storage';
+  page.storageUploadedAt = new Date().toISOString();
+  page.fileMissing = false;
+  return true;
+}
+
+async function uploadScanFilesToSupabaseStorage(sourceState = state) {
+  let uploaded = 0;
+  const groups = [
+    { kind: 'order', list: sourceState.scannedOrders || [] },
+    { kind: 'receipt', list: sourceState.scannedReceipts || [] }
+  ];
+  for (const group of groups) {
+    for (const scan of group.list) {
+      const pages = scanPages(scan);
+      for (let index = 0; index < pages.length; index += 1) {
+        const page = pages[index];
+        const hasInlineFile = Boolean(page?.fileData && String(page.fileData).startsWith('data:'));
+        const isLargeInline = String(page?.fileData || '').length > CLOUD_STORAGE_UPLOAD_THRESHOLD;
+        if (hasInlineFile && (isLargeInline || scanHeavyDataSize(sourceState) > LOCAL_HEAVY_SCAN_LIMIT)) {
+          const ok = await uploadScanPageToSupabaseStorage(group.kind, scan, page, index);
+          if (ok) uploaded += 1;
+        }
+      }
+    }
+  }
+  return uploaded;
+}
+
+function stateWithCloudStorageReferences(sourceState = state) {
+  const clone = JSON.parse(JSON.stringify(sourceState));
+  const stripStoredPages = list => (list || []).map(scan => ({
+    ...scan,
+    pages: scanPages(scan).map(page => {
+      if (!page.storagePath) return page;
+      return {
+        ...page,
+        fileData: '',
+        fileMissing: false,
+        storageBucket: page.storageBucket || CLOUD_STORAGE_BUCKET,
+        storageStatus: 'supabase-storage',
+        fileRemovedReason: 'Document stocké dans Supabase Storage'
+      };
+    })
+  }));
+  clone.scannedOrders = stripStoredPages(clone.scannedOrders);
+  clone.scannedReceipts = stripStoredPages(clone.scannedReceipts);
+  return clone;
+}
+
+async function prepareCloudUploadState(sourceState = state, options = {}) {
+  const heavyBytes = scanHeavyDataSize(sourceState);
+  if (options.light === true) {
+    return { data: stateWithoutHeavyScanData(sourceState), light: true, heavyBytes, storage: false };
+  }
+  try {
+    const uploaded = await uploadScanFilesToSupabaseStorage(sourceState);
+    const data = uploaded ? stateWithCloudStorageReferences(sourceState) : sourceState;
+    return { data, light: false, heavyBytes, storage: Boolean(uploaded), uploaded };
+  } catch (storageError) {
+    console.warn('Envoi vers Supabase Storage impossible, tentative JSON directe.', storageError);
+    if (heavyBytes <= CLOUD_DIRECT_JSON_LIMIT) {
+      return { data: sourceState, light: false, heavyBytes, storage: false, storageError };
+    }
+    throw storageError;
+  }
 }
 
 function findMatchingLocalScan(scan, localList = []) {
@@ -985,8 +1076,7 @@ function mergeScanHeavyDataFromLocal(cloudList = [], localList = []) {
 }
 
 function mergeCloudDataWithLocalHeavyData(cloudData, localState = state) {
-  // Sécurité stockage : les documents lourds ne sont plus récupérés depuis le stockage local.
-  // Le cloud reste la source principale ; si le payload Supabase est allégé, seules les métadonnées sont conservées.
+  // Les documents peuvent être stockés comme objets Supabase Storage : on conserve les liens et on charge le fichier seulement à l’ouverture.
   return normalizeState(cloudData || {});
 }
 
@@ -1010,7 +1100,7 @@ function pruneBackups(backups = []) {
 }
 
 function backupSnapshot(sourceState = state, light = false) {
-  const mustBeLight = Boolean(light) || scanHeavyDataSize(sourceState) > CLOUD_HEAVY_SCAN_LIMIT;
+  const mustBeLight = Boolean(light) || scanHeavyDataSize(sourceState) > LOCAL_HEAVY_SCAN_LIMIT;
   const snapshot = mustBeLight ? stateWithoutHeavyScanData(sourceState) : JSON.parse(JSON.stringify(sourceState));
   snapshot.version = APP_VERSION;
   return snapshot;
@@ -1029,7 +1119,7 @@ function backupStats(snapshot = {}) {
 function createBackup(label = 'Sauvegarde manuelle', options = {}) {
   const createdAt = new Date().toISOString();
   const buildBackup = light => {
-    const forcedLight = Boolean(light) || scanHeavyDataSize(state) > CLOUD_HEAVY_SCAN_LIMIT;
+    const forcedLight = Boolean(light) || scanHeavyDataSize(state) > LOCAL_HEAVY_SCAN_LIMIT;
     const snapshot = backupSnapshot(state, forcedLight);
     return {
       id: uid(),
@@ -1106,10 +1196,10 @@ function backupRowsHtml() {
 
 function saveStateLocalOnly(sourceState = state) {
   const heavyBytes = scanHeavyDataSize(sourceState);
-  const localPayload = heavyBytes > CLOUD_HEAVY_SCAN_LIMIT ? stateWithoutHeavyScanData(sourceState) : sourceState;
+  const localPayload = heavyBytes > LOCAL_HEAVY_SCAN_LIMIT ? stateWithoutHeavyScanData(sourceState) : sourceState;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(localPayload));
-    return { ok: true, light: heavyBytes > CLOUD_HEAVY_SCAN_LIMIT, heavyBytes };
+    return { ok: true, light: heavyBytes > LOCAL_HEAVY_SCAN_LIMIT, heavyBytes };
   } catch (error) {
     console.warn('Stockage local impossible : sauvegarde locale sans fichiers lourds utilisée.', error);
     try {
@@ -1124,14 +1214,14 @@ function saveStateLocalOnly(sourceState = state) {
 
 function purgeHeavyLocalCopies() {
   const heavyBytes = scanHeavyDataSize(state);
-  if (heavyBytes > CLOUD_HEAVY_SCAN_LIMIT) {
+  if (heavyBytes > LOCAL_HEAVY_SCAN_LIMIT) {
     saveStateLocalOnly(state);
   }
   try {
     const backups = loadBackups();
     let changed = false;
     const cleaned = backups.map(backup => {
-      if (!backup?.snapshot || scanHeavyDataSize(backup.snapshot) <= CLOUD_HEAVY_SCAN_LIMIT) return backup;
+      if (!backup?.snapshot || scanHeavyDataSize(backup.snapshot) <= LOCAL_HEAVY_SCAN_LIMIT) return backup;
       changed = true;
       const snapshot = backupSnapshot(backup.snapshot, true);
       return { ...backup, light: true, snapshot, stats: backupStats(snapshot) };
@@ -1243,7 +1333,7 @@ async function saveCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return;
   const tryLightFallback = options.light !== true && scanHeavyDataSize(state) > 0;
   try {
-    const cloudUpload = buildCloudUploadState(state, options);
+    const cloudUpload = await prepareCloudUploadState(state, options);
     const payload = {
       id: CLOUD_RECORD_ID,
       data: cloudUpload.data,
@@ -1257,8 +1347,8 @@ async function saveCloudState(options = {}) {
     lastCloudSaveAt = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     lastCloudUpdatedAt = payload.updated_at;
     lastCloudSaveMode = cloudUpload.light
-      ? `allégé · fichiers lourds non stockés localement (${formatBytes(cloudUpload.heavyBytes)})`
-      : 'complet';
+      ? `allégé · fichiers lourds non inclus (${formatBytes(cloudUpload.heavyBytes)})`
+      : (cloudUpload.storage ? `complet · fichiers dans Supabase Storage (${cloudUpload.uploaded || 0} fichier(s))` : 'complet');
     saveCloudMeta({ updatedAt: payload.updated_at, savedAt: payload.updated_at, loadedAt: payload.updated_at, light: cloudUpload.light, heavyBytes: cloudUpload.heavyBytes });
     lastCloudError = '';
   } catch (error) {
@@ -1266,7 +1356,7 @@ async function saveCloudState(options = {}) {
     if (tryLightFallback) {
       try {
         await saveCloudState({ ...options, light: true, silent: true });
-        if (!lastCloudError && !options.silent) toast('Sauvegarde Supabase allégée créée : les fichiers lourds ne sont pas stockés localement.');
+        if (!lastCloudError && !options.silent) toast('Sauvegarde Supabase allégée créée : les fichiers trop lourds n’ont pas pu être envoyés.');
         return;
       } catch (fallbackError) {
         console.error('Sauvegarde Supabase allégée impossible', fallbackError);
@@ -2940,191 +3030,6 @@ function prepareScannedPage(file) {
   });
 }
 
-function normalizeDocumentDataText(text = '') {
-  return String(text || '')
-    .replace(/\u00a0/g, ' ')
-    .replace(/[|]+/g, ' ')
-    .replace(/([0-9]{5})\s*[.,]\s*([0-9]{3})/g, '$1.$2')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-function lineLooksLikeDocumentData(line = '', meta = {}) {
-  const value = normalizeDocumentDataText(line);
-  if (!value || value.length < 4) return false;
-  if (/^(page|total|sous total|date|bon de|commande|livraison|client|fournisseur|adresse|tva|signature)\b/i.test(value)) return false;
-  if (/\b\d{5}[.,]\d{3}\b/.test(value)) return true;
-  if (meta.docType === 'temperature' && /-?\d{1,2}[,.]\d\s*°?\s*C\b/i.test(value)) return true;
-  return false;
-}
-
-function parseDocumentDataRowsFromText(text = '', meta = {}) {
-  const rawLines = String(text || '').split(/\r?\n/).map(normalizeDocumentDataText).filter(Boolean);
-  const rows = [];
-  const seen = new Set();
-  rawLines.forEach((line, index) => {
-    if (!lineLooksLikeDocumentData(line, meta)) return;
-    const skuMatch = line.match(/\b\d{5}[.,]\d{3}\b/);
-    const reference = skuMatch ? skuMatch[0].replace(',', '.') : '';
-    const product = reference ? state.products.find(item => String(item.sku || '').trim() === reference) : null;
-    let afterReference = reference ? line.slice(line.indexOf(skuMatch[0]) + skuMatch[0].length).trim() : line;
-    const tempMatch = line.match(/-?\d{1,2}[,.]\d\s*°?\s*C\b/i);
-    const numericTokens = afterReference.match(/\b\d+(?:[,.]\d+)?\b/g) || [];
-    let quantite = '';
-    if (reference) {
-      const filtered = numericTokens.filter(token => !String(product?.packageSize || '').includes(token));
-      quantite = filtered[0] || '';
-    }
-    const designation = product?.name || afterReference.replace(/\b\d+(?:[,.]\d+)?\b/g, ' ').replace(/\s{2,}/g, ' ').trim();
-    const conditionnement = product?.packageSize || '';
-    const complement = reference ? afterReference : (tempMatch ? line.replace(tempMatch[0], '').trim() : '');
-    const row = {
-      page: Number(meta.page || 1),
-      line: index + 1,
-      reference,
-      designation: designation || (meta.docType === 'temperature' ? 'Température livraison' : 'Ligne document'),
-      conditionnement,
-      quantite: quantite.replace(',', '.'),
-      temperature: tempMatch ? tempMatch[0].replace(/\s+/g, ' ') : '',
-      complement,
-      source: line
-    };
-    const key = `${row.page}|${row.reference}|${row.source}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      rows.push(row);
-    }
-  });
-  return rows;
-}
-
-function mergeDocumentTables(existing = {}, addition = {}) {
-  const previous = normalizeDocumentTable(existing || {});
-  const next = normalizeDocumentTable(addition || {});
-  const rows = [...(previous.rows || []), ...(next.rows || [])];
-  const fileNames = uniqueList([...(previous.fileNames || []), ...(next.fileNames || [])]);
-  const rawText = [previous.rawText, next.rawText].filter(Boolean).join('\n\n');
-  return normalizeDocumentTable({
-    version: '1',
-    extractedAt: next.extractedAt || previous.extractedAt || new Date().toISOString(),
-    mode: 'table-light',
-    pageCount: Number(previous.pageCount || 0) + Number(next.pageCount || 0),
-    rowCount: rows.length,
-    fileNames,
-    warning: next.warning || previous.warning || '',
-    rawText,
-    rows
-  });
-}
-
-async function extractTextFromPdfDataUrl(dataUrl = '') {
-  if (!window.pdfjsLib?.getDocument) throw new Error('PDF.js non chargé');
-  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
-  const base64 = String(dataUrl || '').split(',')[1] || '';
-  const binary = atob(base64);
-  const buffer = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) buffer[i] = binary.charCodeAt(i);
-  const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-  const pages = [];
-  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const rows = new Map();
-    content.items.forEach(item => {
-      const y = Math.round((item.transform?.[5] || 0) / 3) * 3;
-      if (!rows.has(y)) rows.set(y, []);
-      rows.get(y).push(item);
-    });
-    let pageText = [...rows.entries()]
-      .sort((a, b) => b[0] - a[0])
-      .map(([, items]) => items.sort((a, b) => (a.transform?.[4] || 0) - (b.transform?.[4] || 0)).map(item => item.str).join(' '))
-      .join('\n');
-    if (!pageText.trim() && window.Tesseract?.recognize) {
-      const viewport = page.getViewport({ scale: 1.8 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(viewport.width);
-      canvas.height = Math.round(viewport.height);
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      const imageData = canvas.toDataURL('image/jpeg', 0.82);
-      const result = await window.Tesseract.recognize(imageData, 'fra');
-      pageText = result?.data?.text || '';
-    }
-    pages.push(pageText);
-  }
-  return pages.join('\n');
-}
-
-async function extractTextFromScanPage(page = {}) {
-  if (!page.fileData) return '';
-  const fileType = String(page.fileType || '');
-  if (fileType.includes('pdf') || String(page.fileData).startsWith('data:application/pdf')) {
-    return extractTextFromPdfDataUrl(page.fileData);
-  }
-  if (isImageScanPage(page)) {
-    if (!window.Tesseract?.recognize) throw new Error('Tesseract non chargé');
-    const prepared = await preprocessInventoryOcrImage(page.fileData);
-    const result = await window.Tesseract.recognize(prepared, 'fra');
-    return result?.data?.text || '';
-  }
-  return '';
-}
-
-async function createDocumentTableFromPages(pages = [], meta = {}) {
-  const filePages = Array.from(pages || []).filter(page => page?.fileData);
-  if (!filePages.length) return normalizeDocumentTable({ extractedAt: new Date().toISOString(), rows: [], warning: 'Aucun fichier à lire' });
-  const allRows = [];
-  const rawTexts = [];
-  const warnings = [];
-  for (let index = 0; index < filePages.length; index += 1) {
-    const page = filePages[index];
-    try {
-      const text = await extractTextFromScanPage(page);
-      rawTexts.push(`--- Page ${index + 1} · ${page.fileName || ''} ---\n${text}`);
-      allRows.push(...parseDocumentDataRowsFromText(text, { ...meta, page: index + 1 }));
-    } catch (error) {
-      console.warn('Extraction tableau impossible pour une page', error);
-      warnings.push(`Page ${index + 1} non lue`);
-    }
-  }
-  const rawText = rawTexts.join('\n\n');
-  const fallbackRows = allRows.length ? [] : rawText
-    .split(/\r?\n/)
-    .map(normalizeDocumentDataText)
-    .filter(line => line && !/^--- Page/.test(line) && line.length > 3)
-    .slice(0, 120)
-    .map((line, index) => ({
-      page: 1,
-      line: index + 1,
-      reference: '',
-      designation: 'Texte détecté',
-      conditionnement: '',
-      quantite: '',
-      temperature: (line.match(/-?\d{1,2}[,.]\d\s*°?\s*C\b/i) || [''])[0],
-      complement: '',
-      source: line
-    }));
-  const rows = allRows.length ? allRows : fallbackRows;
-  return normalizeDocumentTable({
-    version: '1',
-    extractedAt: new Date().toISOString(),
-    mode: 'table-light',
-    pageCount: filePages.length,
-    rowCount: rows.length,
-    fileNames: filePages.map(page => page.fileName || '').filter(Boolean),
-    warning: warnings.join(' · '),
-    rawText,
-    rows
-  });
-}
-
-async function buildLightDocumentPagesAndTable(existingScan = {}, newPages = [], meta = {}) {
-  toast('Conversion du document en tableau léger…');
-  const table = await createDocumentTableFromPages(newPages, meta);
-  const mergedTable = mergeDocumentTables(existingScan.documentTable || {}, table);
-  const lightPages = (newPages || []).map(page => lightweightScanPage(page));
-  return { pages: lightPages, documentTable: mergedTable };
-}
-
 async function saveScannedOrderFiles(date, type, files) {
   const list = Array.from(files || []).filter(Boolean);
   if (!list.length) return;
@@ -3132,30 +3037,23 @@ async function saveScannedOrderFiles(date, type, files) {
   try {
     const newPages = [];
     for (const file of list) newPages.push(await prepareScannedPage(file));
-    await persistScannedOrderPages(date, type, newPages);
+    persistScannedOrderPages(date, type, newPages);
   } catch (error) {
     console.error(error);
     toast('Impossible de lire une ou plusieurs pages du bon de commande.');
   }
 }
 
-async function persistScannedOrderPages(date, type, newPages) {
+function persistScannedOrderPages(date, type, newPages) {
   const previousScans = [...(state.scannedOrders || [])];
   const existing = getScannedOrder(date, type);
-  let converted = { pages: (newPages || []).map(page => lightweightScanPage(page)), documentTable: normalizeDocumentTable(existing?.documentTable || {}) };
-  try {
-    converted = await buildLightDocumentPagesAndTable(existing || {}, newPages || [], { kind: 'order', type, date });
-  } catch (error) {
-    console.warn('Conversion tableau du bon de commande impossible', error);
-  }
   const record = normalizeScannedDocumentRecord({
     ...(existing || {}),
     id: existing?.id || uid(),
     date,
     type,
     dayName: dayNames[parseDate(date).getDay()],
-    pages: [...scanPages(existing || {}), ...(converted.pages || [])],
-    documentTable: converted.documentTable,
+    pages: [...scanPages(existing || {}), ...(newPages || [])],
     scannedAt: new Date().toISOString(),
     note: existing?.note || ''
   });
@@ -3164,11 +3062,11 @@ async function persistScannedOrderPages(date, type, newPages) {
   try {
     saveState();
     render();
-    toast(`${scanPageCount(record)} page(s) convertie(s) en tableau pour le bon de commande ${orderTypeLabel(type)} du ${formatDateFr(date)}`);
+    toast(`${scanPageCount(record)} page(s) enregistrée(s) pour le bon de commande ${orderTypeLabel(type)} du ${formatDateFr(date)}`);
   } catch (error) {
     console.error(error);
     state.scannedOrders = previousScans;
-    toast('Impossible d’enregistrer le tableau du bon de commande.');
+    toast('Impossible d’enregistrer les pages numérisées.');
   }
 }
 
@@ -3226,40 +3124,20 @@ async function saveScannedReceiptFiles(date, type, docType, files) {
   try {
     const newPages = [];
     for (const file of list) newPages.push(await prepareScannedPage(file));
-    await persistScannedReceiptPages(date, type, docType, newPages);
+    persistScannedReceiptPages(date, type, docType, newPages);
   } catch (error) {
     console.error(error);
     toast('Impossible de lire une ou plusieurs pages du document de livraison.');
   }
 }
 
-async function persistScannedReceiptPages(date, type, docType, newPages) {
+function persistScannedReceiptPages(date, type, docType, newPages) {
   const previousScans = [...(state.scannedReceipts || [])];
   const scopedType = receiptScanScopeType(type, docType);
   const existing = getScannedReceipt(date, scopedType, docType);
-  const isTemperatureTicket = docType === 'temperature';
-  const sourcePages = isTemperatureTicket ? (newPages || []).slice(0, 1) : (newPages || []);
-  let converted = { pages: sourcePages.map(page => lightweightScanPage(page)), documentTable: normalizeDocumentTable(existing?.documentTable || {}) };
-  if (isTemperatureTicket) {
-    converted = {
-      pages: sourcePages.map(page => ({
-        ...page,
-        fileMissing: false,
-        storageStatus: 'temperature-ticket-original',
-        fileRemovedReason: ''
-      })),
-      documentTable: normalizeDocumentTable({})
-    };
-  } else {
-    try {
-      converted = await buildLightDocumentPagesAndTable(existing || {}, sourcePages, { kind: 'receipt', type: scopedType, docType, date });
-    } catch (error) {
-      console.warn('Conversion tableau du document de livraison impossible', error);
-    }
-  }
-  const pages = isTemperatureTicket
-    ? (converted.pages || []).slice(0, 1)
-    : [...scanPages(existing || {}), ...(converted.pages || [])];
+  const pages = docType === 'temperature'
+    ? (newPages || []).slice(0, 1)
+    : [...scanPages(existing || {}), ...(newPages || [])];
   const record = normalizeScannedDocumentRecord({
     ...(existing || {}),
     id: existing?.id || uid(),
@@ -3268,7 +3146,6 @@ async function persistScannedReceiptPages(date, type, docType, newPages) {
     docType,
     dayName: dayNames[parseDate(date).getDay()],
     pages,
-    documentTable: isTemperatureTicket ? normalizeDocumentTable({}) : converted.documentTable,
     scannedAt: new Date().toISOString(),
     note: existing?.note || ''
   });
@@ -3280,15 +3157,12 @@ async function persistScannedReceiptPages(date, type, docType, newPages) {
   try {
     saveState();
     render();
-    if (isTemperatureTicket) {
-      toast(`Ticket température du ${formatDateFr(date)} enregistré comme document original`);
-    } else {
-      toast(`${receiptDocLabel(docType)} ${receiptTypeLabel(scopedType)} : ${scanPageCount(record)} page(s) convertie(s) en tableau`);
-    }
+    const suffix = docType === 'temperature' ? 'de la livraison' : receiptTypeLabel(scopedType);
+    toast(`${receiptDocLabel(docType)} ${suffix} : ${scanPageCount(record)} page(s) enregistrée(s)`);
   } catch (error) {
     console.error(error);
     state.scannedReceipts = previousScans;
-    toast(isTemperatureTicket ? 'Impossible d’enregistrer le ticket température.' : 'Impossible d’enregistrer le tableau du document.');
+    toast('Impossible d’enregistrer les pages numérisées.');
   }
 }
 
@@ -3431,7 +3305,7 @@ async function openMultiPhotoScanner(kind, target) {
     if (undoBtn) undoBtn.disabled = !scanner.pages.length;
     refreshMultiPhotoScannerPreview();
   });
-  overlay.querySelector('#scannerValidate')?.addEventListener('click', async () => {
+  overlay.querySelector('#scannerValidate')?.addEventListener('click', () => {
     const scanner = activeMultiPhotoScanner;
     if (!scanner?.pages?.length) return toast('Prends au moins une page avant de valider.');
     const pages = [...scanner.pages];
@@ -3439,11 +3313,11 @@ async function openMultiPhotoScanner(kind, target) {
     const kindToSave = scanner.kind;
     stopMultiPhotoScanner();
     if (kindToSave === 'order') {
-      await persistScannedOrderPages(target.date, target.type, pages);
+      persistScannedOrderPages(target.date, target.type, pages);
     } else if (kindToSave === 'inventory') {
       processInventoryOcrPages(pages);
     } else {
-      await persistScannedReceiptPages(target.date, target.type, target.docType || 'delivery', pages);
+      persistScannedReceiptPages(target.date, target.type, target.docType || 'delivery', pages);
     }
   });
 }
@@ -3474,7 +3348,7 @@ function getManualReceiptTarget() {
 }
 
 function isImageScanPage(page = {}) {
-  return String(page.fileType || '').startsWith('image/') && String(page.fileData || '').startsWith('data:image/');
+  return String(page.fileType || '').startsWith('image/') && (String(page.fileData || '').startsWith('data:image/') || Boolean(page.storagePath));
 }
 
 function replaceOrderScanPage(scanId, pageId, nextPage, options = {}) {
@@ -3780,6 +3654,22 @@ function pdfImageFormat(dataUrl) {
   return 'JPEG';
 }
 
+async function fetchSupabaseStorageAsDataUrl(path) {
+  if (!path) return '';
+  if (storageObjectDataUrlCache.has(path)) return storageObjectDataUrlCache.get(path);
+  const response = await supabaseStorageRequest(path, { method: 'GET' });
+  const blob = await response.blob();
+  const dataUrl = await blobToDataUrl(blob);
+  storageObjectDataUrlCache.set(path, dataUrl);
+  return dataUrl;
+}
+
+async function resolveScanPageData(page = {}) {
+  if (page.fileData) return page.fileData;
+  if (page.storagePath) return fetchSupabaseStorageAsDataUrl(page.storagePath);
+  return '';
+}
+
 async function createMultiPagePdfBlob(scan, title = 'Document numérisé') {
   const JsPDF = getJsPdfConstructor();
   if (!JsPDF) throw new Error('Bibliothèque PDF non chargée');
@@ -3789,7 +3679,9 @@ async function createMultiPagePdfBlob(scan, title = 'Document numérisé') {
   let pdf = null;
   for (let i = 0; i < imagePages.length; i += 1) {
     const page = imagePages[i];
-    const size = await imageSizeFromDataUrl(page.fileData);
+    const pageData = await resolveScanPageData(page);
+    if (!pageData) continue;
+    const size = await imageSizeFromDataUrl(pageData);
     const orientation = size.width > size.height ? 'landscape' : 'portrait';
     if (!pdf) pdf = new JsPDF({ orientation, unit: 'mm', format: 'a4', compress: true });
     else pdf.addPage('a4', orientation);
@@ -3804,81 +3696,12 @@ async function createMultiPagePdfBlob(scan, title = 'Document numérisé') {
     const drawHeight = size.height * ratio;
     const x = (pageWidth - drawWidth) / 2;
     const y = (pageHeight - drawHeight) / 2;
-    pdf.addImage(page.fileData, pdfImageFormat(page.fileData), x, y, drawWidth, drawHeight, undefined, 'FAST');
+    pdf.addImage(pageData, pdfImageFormat(pageData), x, y, drawWidth, drawHeight, undefined, 'FAST');
     pdf.setFontSize(7);
     pdf.setTextColor(120);
     pdf.text(`${title} — page ${i + 1}/${imagePages.length}`, margin, pageHeight - 3);
   }
-  return pdf.output('blob');
-}
-
-function scanTablePdfRows(scan = {}) {
-  const table = scanDocumentTable(scan);
-  return table?.rows || [];
-}
-
-function addWrappedPdfText(pdf, text, x, y, maxWidth, lineHeight) {
-  const lines = pdf.splitTextToSize(String(text || ''), maxWidth);
-  lines.forEach((line, index) => pdf.text(line, x, y + index * lineHeight));
-  return lines.length * lineHeight;
-}
-
-async function createDocumentTablePdfBlob(scan, kind = 'document', title = 'Document converti en tableau') {
-  const JsPDF = getJsPdfConstructor();
-  if (!JsPDF) throw new Error('Bibliothèque PDF non chargée');
-  const table = scanDocumentTable(scan);
-  if (!table?.rows?.length) throw new Error('Aucune donnée tableau disponible');
-  const pdf = new JsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-  const margin = 8;
-  const lineHeight = 4;
-  const col = [9, 27, 52, 35, 19, 22, pageWidth - margin * 2 - 9 - 27 - 52 - 35 - 19 - 22];
-  const headers = ['P.', 'Référence', 'Désignation / donnée', 'Cond.', 'Qté', 'Temp.', 'Ligne détectée'];
-  let y = margin;
-  const printHeader = () => {
-    pdf.setFontSize(13);
-    pdf.setTextColor(17, 24, 39);
-    pdf.text(title, margin, y);
-    pdf.setFontSize(8);
-    pdf.setTextColor(90);
-    pdf.text(`Date : ${formatDateFr(scan.date || today())} · Généré : ${new Date().toLocaleString('fr-FR')} · Mode tableau léger`, margin, y + 5);
-    y += 12;
-    pdf.setFontSize(7);
-    pdf.setTextColor(17, 24, 39);
-    let x = margin;
-    headers.forEach((header, index) => {
-      pdf.rect(x, y, col[index], 6);
-      pdf.text(header, x + 1, y + 4);
-      x += col[index];
-    });
-    y += 6;
-  };
-  printHeader();
-  table.rows.forEach(row => {
-    const values = [row.page || '', row.reference || '', row.designation || '', row.conditionnement || '', row.quantite || '', row.temperature || '', row.source || row.complement || ''];
-    const heights = values.map((value, index) => pdf.splitTextToSize(String(value || ''), Math.max(8, col[index] - 2)).length * lineHeight);
-    const rowHeight = Math.max(7, ...heights) + 2;
-    if (y + rowHeight > pageHeight - margin) {
-      pdf.addPage('a4', 'landscape');
-      y = margin;
-      printHeader();
-    }
-    let x = margin;
-    pdf.setFontSize(7);
-    values.forEach((value, index) => {
-      pdf.rect(x, y, col[index], rowHeight);
-      addWrappedPdfText(pdf, value, x + 1, y + 4, Math.max(8, col[index] - 2), lineHeight);
-      x += col[index];
-    });
-    y += rowHeight;
-  });
-  if (table.warning) {
-    if (y + 12 > pageHeight - margin) { pdf.addPage('a4', 'landscape'); y = margin; }
-    pdf.setFontSize(8);
-    pdf.setTextColor(146, 64, 14);
-    pdf.text(`Avertissement : ${table.warning}`, margin, y + 6);
-  }
+  if (!pdf) throw new Error('Aucune page disponible à convertir');
   return pdf.output('blob');
 }
 
@@ -3902,26 +3725,18 @@ function downloadDataUrl(dataUrl, filename) {
 }
 
 function existingPdfPage(scan) {
-  return scanPages(scan || {}).find(page => String(page.fileType || '').includes('pdf') && String(page.fileData || '').startsWith('data:application/pdf'));
+  return scanPages(scan || {}).find(page => String(page.fileType || '').includes('pdf') && (String(page.fileData || '').startsWith('data:application/pdf') || Boolean(page.storagePath)));
 }
 
 async function getScanPdfUrl(scan, kind, title) {
   if (!scan) return '';
-  const table = scanDocumentTable(scan);
-  const pages = scanPages(scan);
-  const tableKey = table?.rows?.length ? `table:${table.extractedAt || ''}:${table.rows.length}` : '';
-  const cacheKey = `${kind}:${scan.id}:${scan.scannedAt || ''}:${pages.length}:${tableKey}:${pages.map(page => `${page.id || ''}:${page.editedAt || page.scannedAt || ''}`).join(',')}`;
-  if (reportDocumentUrlCache.has(cacheKey)) return reportDocumentUrlCache.get(cacheKey);
-  if (table?.rows?.length) {
-    const blob = await createDocumentTablePdfBlob(scan, kind, title || 'Document converti en tableau');
-    const url = URL.createObjectURL(blob);
-    reportDocumentUrlCache.set(cacheKey, url);
-    return url;
-  }
   const existingPdf = existingPdfPage(scan);
-  if (existingPdf) return existingPdf.fileData;
+  if (existingPdf) return existingPdf.fileData || await resolveScanPageData(existingPdf);
+  const pages = scanPages(scan);
   const imagePages = pages.filter(isImageScanPage);
   if (!imagePages.length) return '';
+  const cacheKey = `${kind}:${scan.id}:${scan.scannedAt || ''}:${pages.length}:${pages.map(page => `${page.id || ''}:${page.editedAt || page.scannedAt || ''}`).join(',')}`;
+  if (reportDocumentUrlCache.has(cacheKey)) return reportDocumentUrlCache.get(cacheKey);
   const blob = await createMultiPagePdfBlob(scan, title);
   const url = URL.createObjectURL(blob);
   reportDocumentUrlCache.set(cacheKey, url);
@@ -3933,11 +3748,11 @@ async function openScanPdf(scan, kind, title) {
   try {
     toast('Ouverture du PDF…');
     const url = await getScanPdfUrl(scan, kind, title);
-    if (!url) return toast('PDF non disponible sur cet appareil : fichier lourd non conservé localement.');
+    if (!url) return toast('PDF non disponible : fichier non présent localement et introuvable dans Supabase.');
     const opened = window.open(url, '_blank');
     if (!opened) {
       const existingPdf = existingPdfPage(scan);
-      if (existingPdf) downloadDataUrl(existingPdf.fileData, scanPdfFileName(scan, kind));
+      if (existingPdf) downloadDataUrl(existingPdf.fileData || await resolveScanPageData(existingPdf), scanPdfFileName(scan, kind));
       else downloadBlob(await createMultiPagePdfBlob(scan, title), scanPdfFileName(scan, kind));
       toast('Popup bloquée : le PDF a été téléchargé à la place.');
     }
@@ -3952,24 +3767,13 @@ async function downloadScanAsPdf(scan, kind, title) {
   const pages = scanPages(scan);
   const imagePages = pages.filter(isImageScanPage);
   const existingPdf = existingPdfPage(scan);
-  const table = scanDocumentTable(scan);
-  if (table?.rows?.length) {
-    try {
-      toast('Création du PDF tableau…');
-      const blob = await createDocumentTablePdfBlob(scan, kind, title || 'Document converti en tableau');
-      downloadBlob(blob, scanPdfFileName(scan, kind));
-      toast('PDF tableau généré');
-    } catch (error) {
-      console.error(error);
-      toast('Impossible de créer le PDF tableau.');
-    }
-    return;
-  }
   if (!imagePages.length && existingPdf) {
-    downloadDataUrl(existingPdf.fileData, scanPdfFileName(scan, kind));
+    const pdfData = existingPdf.fileData || await resolveScanPageData(existingPdf);
+    if (!pdfData) return toast('PDF non disponible : fichier introuvable dans Supabase.');
+    downloadDataUrl(pdfData, scanPdfFileName(scan, kind));
     return;
   }
-  if (!imagePages.length) return toast('PDF non disponible : aucune donnée tableau et fichier lourd non conservé.');
+  if (!imagePages.length) return toast('PDF non disponible : fichier non présent localement et introuvable dans Supabase.');
   try {
     toast('Création du PDF multipage…');
     const blob = await createMultiPagePdfBlob(scan, title);
@@ -4005,37 +3809,6 @@ function inventoryTypeChecks(product = {}) {
   return INVENTORY_TYPES.map(type => `
     <label class="checkbox-line"><input type="checkbox" name="inventoryTypes" value="${type.id}" ${selected.includes(type.id) ? 'checked' : ''} /> ${escapeHtml(type.label)}</label>
   `).join('');
-}
-
-function documentTableHtml(scan = {}) {
-  const table = scanDocumentTable(scan);
-  if (!table?.rows?.length) {
-    return `<div class="scan-table-empty"><p class="muted">Aucun tableau de données généré pour ce document.</p></div>`;
-  }
-  const rows = table.rows.map(row => `
-    <tr>
-      <td>${escapeHtml(row.page || '')}</td>
-      <td>${escapeHtml(row.reference || '-')}</td>
-      <td><strong>${escapeHtml(row.designation || '-')}</strong><br><span class="muted">${escapeHtml(row.complement || '')}</span></td>
-      <td>${escapeHtml(row.conditionnement || '-')}</td>
-      <td>${escapeHtml(row.quantite || '-')}</td>
-      <td>${escapeHtml(row.temperature || '-')}</td>
-      <td class="source-cell">${escapeHtml(row.source || '')}</td>
-    </tr>
-  `).join('');
-  return `
-    <div class="scan-table-card">
-      <div class="toolbar">
-        <div>
-          <h4>Tableau de données extrait</h4>
-          <p class="muted">${escapeHtml(table.rows.length)} ligne(s) · fichiers lourds remplacés par des données légères${table.extractedAt ? ` · ${escapeHtml(new Date(table.extractedAt).toLocaleString('fr-FR'))}` : ''}</p>
-        </div>
-        <span class="badge success">Léger</span>
-      </div>
-      ${table.warning ? `<div class="alert warning">${escapeHtml(table.warning)}</div>` : ''}
-      <div class="table-wrap compact-table extracted-doc-table"><table><thead><tr><th>P.</th><th>Référence</th><th>Désignation / donnée</th><th>Cond.</th><th>Qté</th><th>Temp.</th><th>Ligne détectée</th></tr></thead><tbody>${rows}</tbody></table></div>
-    </div>
-  `;
 }
 
 function renderDashboard() {
@@ -4605,7 +4378,7 @@ function renderOrders() {
       const pageCount = scanPageCount(scan || {});
       return `
         <div class="order-scan-slot">
-          <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) · ${scanDocumentTable(scan)?.rows?.length || 0} ligne(s) ✓` : ''}</span>
+          <span class="badge ${scan ? 'success' : 'warning'}">${escapeHtml(orderTypeLabel(type))}${scan ? ` · ${pageCount} page(s) ✓` : ''}</span>
           <button type="button" class="small ${scan ? 'secondary' : ''}" data-action="triggerOrderScan" data-id="${row.date}" data-type="${type}">${scan ? 'Scanner pages' : 'Scanner pages'}</button>
           <button type="button" class="small secondary" data-action="triggerOrderImport" data-id="${row.date}" data-type="${type}">Importer plusieurs pages</button>
           ${scan ? `<button type="button" class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir les ${pageCount} page(s)</button><button type="button" class="small success" data-action="downloadScannedOrderPdf" data-id="${scan.id}">PDF</button>` : ''}
@@ -4631,11 +4404,10 @@ function renderOrders() {
       <tr>
         <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
         <td>${escapeHtml(orderTypeLabel(scan.type))}</td>
-        <td><strong>${pages.length} page(s)</strong><br>${receiptDocumentStorageSummary(scan)}<br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
+        <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedOrder" data-id="${scan.id}">Voir</button>
           <button class="small success" data-action="downloadScannedOrderPdf" data-id="${scan.id}">PDF</button>
-          ${scanPages(scan).some(page => page.fileData) ? `<button class="small secondary" data-action="convertScannedOrderToTable" data-id="${scan.id}">Convertir tableau</button>` : ''}
           <button class="small" data-action="triggerOrderScan" data-id="${scan.date}" data-type="${scan.type}">Scanner pages</button>
           <button class="small secondary" data-action="triggerOrderImport" data-id="${scan.date}" data-type="${scan.type}">Importer pages</button>
           <button class="small danger-soft" data-action="deleteScannedOrder" data-id="${scan.id}">Supprimer le document</button>
@@ -4716,7 +4488,7 @@ function renderOrders() {
       <div class="toolbar">
         <div>
           <h3>Bons de commande numérisés</h3>
-          <p class="muted">Un même bon peut contenir autant de pages que nécessaire. Au moment du scan/import, les pages sont converties en tableau de données léger : les images/PDF lourds ne sont pas conservés.</p>
+          <p class="muted">Un même bon peut contenir autant de pages que nécessaire. Tu peux ajouter une page avec l’appareil photo ou importer toutes les pages d’un coup depuis la galerie, un scanner mobile ou un PDF.</p>
         </div>
       </div>
       <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Pages</th><th>Actions</th></tr></thead><tbody>${scannedRows}</tbody></table></div>
@@ -4826,11 +4598,10 @@ function renderReceipts() {
         <td><strong>${escapeHtml(formatDateFr(scan.date))}</strong><br><span class="muted">${escapeHtml(scan.date)}</span></td>
         <td>${escapeHtml(isTemperature ? 'Livraison complète' : receiptTypeLabel(scan.type))}</td>
         <td>${escapeHtml(receiptDocLabel(scan.docType))}</td>
-        <td><strong>${pages.length} page(s)</strong><br>${receiptDocumentStorageSummary(scan)}<br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
+        <td><strong>${pages.length} page(s)</strong><br><span class="muted">Dernier ajout : ${escapeHtml(new Date(latest).toLocaleString('fr-FR'))}</span></td>
         <td class="actions">
           <button class="small secondary" data-action="viewScannedReceipt" data-id="${scan.id}">Voir</button>
           <button class="small success" data-action="downloadScannedReceiptPdf" data-id="${scan.id}">PDF</button>
-          ${!isTemperature && scanPages(scan).some(page => page.fileData) ? `<button class="small secondary" data-action="convertScannedReceiptToTable" data-id="${scan.id}">Convertir tableau</button>` : ''}
           <button class="small" data-action="triggerReceiptScan" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Remplacer ticket' : 'Scanner pages'}</button>
           <button class="small secondary" data-action="triggerReceiptImport" data-id="${scan.date}" data-type="${scan.type}" data-doc="${scan.docType || 'delivery'}">${isTemperature ? 'Importer ticket' : 'Importer pages'}</button>
           <button class="small danger-soft" data-action="deleteScannedReceipt" data-id="${scan.id}">Supprimer le document</button>
@@ -4886,7 +4657,7 @@ function renderReceipts() {
       <div class="toolbar">
         <div>
           <h3>Documents de livraison numérisés</h3>
-          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Au moment du scan/import, les BL sont convertis en tableau de données léger. Le ticket température reste un document original consultable en PDF.</p>
+          <p class="muted">Les bons de livraison peuvent contenir plusieurs pages. Tu peux ajouter un document manquant à une date passée, puis scanner ou importer toutes ses pages.</p>
         </div>
       </div>
       ${missingReceiptDocPanel}
@@ -5159,13 +4930,12 @@ function weeklyReportAllLinkedDocumentsHtml(dates, linkMap = null) {
         <td>${escapeHtml(item.label)}</td>
         <td>${item.scan ? 'Présent' : 'Manquant'}</td>
         <td>${pages.length || '-'}</td>
-        <td>${scanDocumentTable(item.scan)?.rows?.length || '-'}</td>
         <td>${escapeHtml(pages.map(page => page.fileName || '').filter(Boolean).join(' | ') || '-')}</td>
         <td>${weeklyReportDocumentActionHtml(item, linkMap)}</td>
       </tr>
     `;
   })).join('');
-  return `<div class="table-wrap compact-table report-documents-wrap"><table><thead><tr><th>Date</th><th>Document</th><th>État</th><th>Pages</th><th>Données tableau</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-wrap compact-table report-documents-wrap"><table><thead><tr><th>Date</th><th>Document</th><th>État</th><th>Pages</th><th>Fichier(s)</th><th>PDF lié</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderReports() {
@@ -5207,7 +4977,7 @@ function renderReports() {
       <p class="muted">Les taux Général et Ultra frais sont regroupés ici pour la semaine.</p>
       ${ratesTable}
       <h3>Documents liés</h3>
-      <p class="muted">Les BC, BL et tickets température sont regroupés en liens PDF générés depuis les tableaux de données légers. Les images ne sont plus stockées ni affichées directement dans le rapport.</p>
+      <p class="muted">Les BC, BL et tickets température sont regroupés en liens PDF. Les images ne sont plus affichées directement dans le rapport.</p>
       ${linkedDocuments}
     </div>
   `;
@@ -5269,8 +5039,8 @@ function renderUsers() {
 function renderSettings() {
   const cloudModeDetail = lastCloudSaveMode ? ` · Mode : ${escapeHtml(lastCloudSaveMode)}` : '';
   const heavyBytes = scanHeavyDataSize();
-  const cloudHeavyHint = heavyBytes > CLOUD_HEAVY_SCAN_LIMIT
-    ? `<p class="muted small">Documents numérisés volumineux détectés (${escapeHtml(formatBytes(heavyBytes))}) : le logiciel tente d’abord l’envoi complet vers Supabase. Si Supabase refuse, il crée une sauvegarde allégée. Les fichiers lourds des BC/BL sont allégés ; le ticket température reste conservé comme document original.</p>`
+  const cloudHeavyHint = heavyBytes > LOCAL_HEAVY_SCAN_LIMIT
+    ? `<p class="muted small">Documents numérisés volumineux détectés (${escapeHtml(formatBytes(heavyBytes))}) : le logiciel envoie les fichiers vers Supabase Storage pour alléger la sauvegarde. Si le bucket n’est pas configuré, il tente un envoi JSON direct jusqu’à ${escapeHtml(formatBytes(CLOUD_DIRECT_JSON_LIMIT))}, puis bascule en sauvegarde allégée.</p>`
     : '';
   return `
     <div class="grid grid-2">
@@ -5299,7 +5069,7 @@ function renderSettings() {
       </div>
       <div class="card">
         <h3>Sauvegarde / transfert</h3>
-        <p class="muted">La connexion Supabase est automatique : au démarrage, au retour réseau et au retour sur l’onglet. Les données légères restent en secours sur l’appareil ; les BC/BL sont convertis en tableaux légers et le ticket température reste au format document original.</p>
+        <p class="muted">La connexion Supabase est automatique : au démarrage, au retour réseau et au retour sur l’onglet. Les documents lourds sont envoyés dans Supabase Storage afin de garder la sauvegarde principale légère.</p>
         <div class="cloud-status ${cloudReady && !lastCloudError ? 'success' : 'warning'}">
           <strong>${cloudReady && !lastCloudError ? 'Cloud Supabase connecté automatiquement' : 'Connexion Supabase automatique en attente'}</strong>
           <span>${cloudReady && !lastCloudError ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')} ${lastCloudUpdatedAt ? `· Cloud : ${escapeHtml(new Date(lastCloudUpdatedAt).toLocaleString('fr-FR'))}` : ''}${cloudModeDetail}` : `Le logiciel fonctionne en local et réessaie automatiquement. ${lastCloudError ? `Détail : ${escapeHtml(lastCloudError)}` : 'Tu peux aussi tester manuellement.'}`}</span>
@@ -5316,7 +5086,7 @@ function renderSettings() {
       </div>
       <div class="card wide">
         <h3>Backups / points de restauration</h3>
-        <p class="muted">Les backups permettent de revenir à une sauvegarde précédente en cas d’erreur. Ils sont conservés sur cet appareil sans les fichiers lourds des documents numérisés. Le logiciel garde les ${BACKUP_MAX_COUNT} derniers points.</p>
+        <p class="muted">Les backups permettent de revenir à une sauvegarde précédente en cas d’erreur. Ils sont conservés sur cet appareil sans les fichiers lourds des documents numérisés. Les documents complets restent dans Supabase Storage quand l’envoi a réussi. Le logiciel garde les ${BACKUP_MAX_COUNT} derniers points.</p>
         <div class="form-actions inline-actions">
           <button data-action="createBackupNow" class="success">Créer un point de restauration</button>
         </div>
@@ -5822,7 +5592,7 @@ Annuler = non, il sera archivé normalement.`);
         ? (isImage
           ? `<img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Page ${index + 1} du bon de commande" />`
           : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || orderScanFileName(scan.date, scan.type))}">Télécharger / ouvrir le fichier</a></div>`)
-        : `<div class="scan-file-preview warning"><p><strong>Fichier non conservé localement.</strong></p><p class="muted">Seules les informations du document sont gardées sur cet appareil.</p></div>`;
+        : `<div class="scan-file-preview warning"><p><strong>Fichier stocké hors sauvegarde locale.</strong></p><p class="muted">Le document peut être récupéré depuis Supabase si l’envoi cloud a réussi.</p></div>`;
       return `
         <section class="scan-page-card">
           <div class="scan-page-header"><strong>Page ${index + 1}</strong><span class="muted">${escapeHtml(page.fileName || '')}</span></div>
@@ -5838,10 +5608,8 @@ Annuler = non, il sera archivé normalement.`);
     openModal(`Bon de commande · ${orderTypeLabel(scan.type)}`, `
       <div class="scan-modal-content">
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(orderTypeLabel(scan.type))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
-        ${documentTableHtml(scan)}
         <div class="form-actions">
-          <button type="button" data-action="downloadScannedOrderPdf" data-id="${scan.id}" class="success">Télécharger PDF tableau</button>
-          ${pages.some(page => page.fileData) ? `<button type="button" data-action="convertScannedOrderToTable" data-id="${scan.id}" class="secondary">Convertir maintenant</button>` : ''}
+          <button type="button" data-action="downloadScannedOrderPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
           <button type="button" id="modalCancel" class="secondary">Fermer</button>
         </div>
         <div class="scan-pages-list">${previews}</div>
@@ -5894,25 +5662,6 @@ Annuler = non, il sera archivé normalement.`);
       }
     });
     bindCropPreview(page.fileData);
-  },
-  async convertScannedOrderToTable(id) {
-    const scan = (state.scannedOrders || []).find(x => x.id === id);
-    if (!scan) return toast('Bon de commande introuvable');
-    const pages = scanPages(scan).filter(page => page.fileData);
-    if (!pages.length) return toast('Aucun fichier disponible à convertir');
-    try {
-      const table = await createDocumentTableFromPages(pages, { kind: 'order', type: scan.type, date: scan.date });
-      scan.documentTable = mergeDocumentTables(scan.documentTable || {}, table);
-      scan.pages = scanPages(scan).map(page => page.fileData ? lightweightScanPage(page) : page);
-      scan.scannedAt = new Date().toISOString();
-      saveState();
-      closeModal();
-      render();
-      toast(`${scan.documentTable.rows.length} ligne(s) conservée(s) en tableau léger`);
-    } catch (error) {
-      console.error(error);
-      toast('Impossible de convertir ce bon de commande en tableau');
-    }
   },
   deleteScannedOrderPage(id, pageId) {
     const scan = (state.scannedOrders || []).find(x => x.id === id);
@@ -5969,7 +5718,7 @@ Annuler = non, il sera archivé normalement.`);
         ? (isImage
           ? `<img class="scan-preview" src="${escapeHtml(page.fileData)}" alt="Page ${index + 1} du document numérisé" />`
           : `<div class="scan-file-preview"><p>Fichier non-image enregistré.</p><a class="download-link" href="${escapeHtml(page.fileData)}" download="${escapeHtml(page.fileName || receiptScanFileName(scan.date, scan.type, scan.docType))}">Télécharger / ouvrir le fichier</a></div>`)
-        : `<div class="scan-file-preview warning"><p><strong>Fichier non conservé localement.</strong></p><p class="muted">Seules les informations du document sont gardées sur cet appareil.</p></div>`;
+        : `<div class="scan-file-preview warning"><p><strong>Fichier stocké hors sauvegarde locale.</strong></p><p class="muted">Le document peut être récupéré depuis Supabase si l’envoi cloud a réussi.</p></div>`;
       return `
         <section class="scan-page-card">
           <div class="scan-page-header"><strong>Page ${index + 1}</strong><span class="muted">${escapeHtml(page.fileName || '')}</span></div>
@@ -5985,10 +5734,8 @@ Annuler = non, il sera archivé normalement.`);
     openModal(`${receiptDocLabel(scan.docType)} · ${scanTypeLabel}`, `
       <div class="scan-modal-content">
         <p><strong>Date :</strong> ${escapeHtml(formatDateFr(scan.date))}<br><strong>Type :</strong> ${escapeHtml(scanTypeLabel)}<br><strong>Document :</strong> ${escapeHtml(receiptDocLabel(scan.docType))}<br><strong>Nombre de pages :</strong> ${pages.length}</p>
-        ${scan.docType === 'temperature' ? '<p class="muted">Le ticket température reste conservé comme document original. Il n’est pas transformé en tableau.</p>' : documentTableHtml(scan)}
         <div class="form-actions">
-          <button type="button" data-action="downloadScannedReceiptPdf" data-id="${scan.id}" class="success">${scan.docType === 'temperature' ? 'Télécharger PDF' : 'Télécharger PDF tableau'}</button>
-          ${scan.docType !== 'temperature' && pages.some(page => page.fileData) ? `<button type="button" data-action="convertScannedReceiptToTable" data-id="${scan.id}" class="secondary">Convertir maintenant</button>` : ''}
+          <button type="button" data-action="downloadScannedReceiptPdf" data-id="${scan.id}" class="success">Télécharger PDF multipage</button>
           <button type="button" id="modalCancel" class="secondary">Fermer</button>
         </div>
         <div class="scan-pages-list">${previews}</div>
@@ -6043,26 +5790,6 @@ Annuler = non, il sera archivé normalement.`);
       }
     });
     bindCropPreview(page.fileData);
-  },
-  async convertScannedReceiptToTable(id) {
-    const scan = (state.scannedReceipts || []).find(x => x.id === id);
-    if (!scan) return toast('Document de livraison introuvable');
-    if (scan.docType === 'temperature') return toast('Le ticket température reste au format document original.');
-    const pages = scanPages(scan).filter(page => page.fileData);
-    if (!pages.length) return toast('Aucun fichier disponible à convertir');
-    try {
-      const table = await createDocumentTableFromPages(pages, { kind: 'receipt', type: scan.type, docType: scan.docType, date: scan.date });
-      scan.documentTable = mergeDocumentTables(scan.documentTable || {}, table);
-      scan.pages = scanPages(scan).map(page => page.fileData ? lightweightScanPage(page) : page);
-      scan.scannedAt = new Date().toISOString();
-      saveState();
-      closeModal();
-      render();
-      toast(`${scan.documentTable.rows.length} ligne(s) conservée(s) en tableau léger`);
-    } catch (error) {
-      console.error(error);
-      toast('Impossible de convertir ce document en tableau');
-    }
   },
   deleteScannedReceiptPage(id, pageId) {
     const scan = (state.scannedReceipts || []).find(x => x.id === id);
@@ -6502,7 +6229,7 @@ Annuler = non, il sera archivé normalement.`);
     createBackup('Avant restauration', { silent: true });
     try {
       state = normalizeState(backup.snapshot || {});
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      saveStateLocalOnly(state);
       saveState();
       renderNav();
       render();
@@ -6916,7 +6643,7 @@ async function printWeeklyReportPdf(weekStart) {
   </section>
   <section class="page-section">
     <h2>Documents liés BC / BL / ticket température</h2>
-    <p class="subtitle">Les documents sont affichés sous forme de liens PDF générés depuis les tableaux de données légers. Les images ne sont pas intégrées directement dans le rapport.</p>
+    <p class="subtitle">Les documents sont volontairement affichés uniquement sous forme de liens PDF. Les images ne sont pas intégrées directement dans le rapport.</p>
     ${documentLinks}
   </section>
   ${inventorySections}
