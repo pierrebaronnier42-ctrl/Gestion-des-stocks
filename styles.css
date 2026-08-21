@@ -1120,3 +1120,90 @@ body.auth-required .content {
 .report-rates-wrap td:nth-child(3) {
   font-weight: 700;
 }
+
+/* v1.61 - indicateur d'envoi Supabase */
+.cloud-sync-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 999px;
+  padding: 7px 11px;
+  border: 1px solid rgba(148, 163, 184, .38);
+  background: rgba(248, 250, 252, .95);
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  max-width: 100%;
+}
+.cloud-sync-pill.compact {
+  max-width: min(360px, 100%);
+}
+.cloud-sync-main {
+  white-space: nowrap;
+}
+.cloud-sync-detail {
+  color: var(--muted);
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+.cloud-sync-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #64748b;
+  flex: 0 0 auto;
+}
+.cloud-sync-pill.pending .cloud-sync-dot {
+  background: #f59e0b;
+}
+.cloud-sync-pill.sending .cloud-sync-dot {
+  border: 2px solid #bfdbfe;
+  border-top-color: #2563eb;
+  background: transparent;
+  animation: cloudSyncSpin .75s linear infinite;
+}
+.cloud-sync-pill.success .cloud-sync-dot {
+  background: #16a34a;
+}
+.cloud-sync-pill.error .cloud-sync-dot {
+  background: #dc2626;
+}
+.cloud-sync-pill.sending {
+  border-color: rgba(37, 99, 235, .35);
+  background: rgba(219, 234, 254, .95);
+  color: #1d4ed8;
+}
+.cloud-sync-pill.pending {
+  border-color: rgba(245, 158, 11, .35);
+  background: rgba(254, 243, 199, .95);
+  color: #92400e;
+}
+.cloud-sync-pill.success {
+  border-color: rgba(22, 163, 74, .32);
+  background: rgba(220, 252, 231, .95);
+  color: #166534;
+}
+.cloud-sync-pill.error {
+  border-color: rgba(220, 38, 38, .32);
+  background: rgba(254, 226, 226, .95);
+  color: #991b1b;
+}
+@keyframes cloudSyncSpin {
+  to { transform: rotate(360deg); }
+}
+@media (max-width: 720px) {
+  .cloud-sync-pill {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .cloud-sync-main {
+    white-space: normal;
+  }
+  .cloud-sync-detail {
+    max-width: 100%;
+    white-space: normal;
+  }
+}

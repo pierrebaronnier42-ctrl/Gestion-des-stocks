@@ -5,7 +5,7 @@ const BACKUP_STORAGE_KEY = 'gestion-stock-web-v1-backups';
 const CLOUD_META_STORAGE_KEY = 'gestion-stock-web-v1-cloud-meta';
 const BACKUP_MAX_COUNT = 12;
 const AUTH_SESSION_KEY = 'gestion-stock-web-v1-auth-session';
-const APP_VERSION = '1.60.0-no-table-storage-upload';
+const APP_VERSION = '1.61.0-cloud-send-indicator';
 const CLOUD_RECORD_ID = 'main';
 const CLOUD_TABLE = 'app_data';
 
@@ -187,6 +187,10 @@ let lastCloudSaveAt = '';
 let lastCloudUpdatedAt = '';
 let lastCloudSaveMode = '';
 let lastCloudError = '';
+let cloudTransferStatus = 'idle';
+let cloudTransferMessage = '';
+let cloudTransferDetail = '';
+let cloudTransferClearTimer = null;
 let reportDocumentUrlCache = new Map();
 let currentUser = loadAuthSession();
 
@@ -250,6 +254,77 @@ function userRoleLabel(role) {
   return USER_ROLE_LABELS[String(role || '300')] || '300 - Responsable';
 }
 
+
+function cloudSyncIndicatorLabel() {
+  if (cloudTransferStatus === 'pending') return cloudTransferMessage || 'Envoi Supabase en attente';
+  if (cloudTransferStatus === 'sending') return cloudTransferMessage || 'Envoi Supabase en cours';
+  if (cloudTransferStatus === 'success') return cloudTransferMessage || 'Données envoyées vers Supabase';
+  if (cloudTransferStatus === 'error') return cloudTransferMessage || 'Envoi Supabase impossible';
+  if (cloudReady && !lastCloudError) return 'Cloud prêt';
+  return 'Cloud en attente';
+}
+
+function cloudSyncIndicatorDetail() {
+  if (cloudTransferDetail) return cloudTransferDetail;
+  if (cloudTransferStatus === 'idle' && lastCloudSaveAt) return `Dernier envoi ${lastCloudSaveAt}`;
+  if (cloudTransferStatus === 'idle' && lastCloudError) return lastCloudError;
+  return '';
+}
+
+function cloudSyncIndicatorClass() {
+  if (cloudTransferStatus === 'sending') return 'sending';
+  if (cloudTransferStatus === 'pending') return 'pending';
+  if (cloudTransferStatus === 'success') return 'success';
+  if (cloudTransferStatus === 'error') return 'error';
+  return cloudReady && !lastCloudError ? 'success idle' : 'pending idle';
+}
+
+function cloudSyncIndicatorHtml(options = {}) {
+  const compact = Boolean(options.compact);
+  const detail = cloudSyncIndicatorDetail();
+  return `
+    <span class="cloud-sync-pill ${cloudSyncIndicatorClass()} ${compact ? 'compact' : ''}" data-cloud-sync-indicator title="${escapeHtml(detail || cloudSyncIndicatorLabel())}">
+      <span class="cloud-sync-dot" aria-hidden="true"></span>
+      <span class="cloud-sync-main">${escapeHtml(cloudSyncIndicatorLabel())}</span>
+      ${detail && !compact ? `<span class="cloud-sync-detail">${escapeHtml(detail)}</span>` : ''}
+    </span>
+  `;
+}
+
+function updateCloudTransferIndicator() {
+  const indicators = document.querySelectorAll('[data-cloud-sync-indicator]');
+  if (!indicators.length) {
+    updateAuthBar();
+    return;
+  }
+  indicators.forEach(indicator => {
+    const compact = indicator.classList.contains('compact');
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = cloudSyncIndicatorHtml({ compact });
+    const next = wrapper.firstElementChild;
+    if (next) indicator.replaceWith(next);
+  });
+}
+
+function setCloudTransferStatus(status = 'idle', message = '', detail = '', options = {}) {
+  cloudTransferStatus = status;
+  cloudTransferMessage = message;
+  cloudTransferDetail = detail;
+  clearTimeout(cloudTransferClearTimer);
+  updateCloudTransferIndicator();
+  if (status === 'success' || status === 'error') {
+    const timeout = Number(options.timeout || (status === 'success' ? 5500 : 9000));
+    cloudTransferClearTimer = setTimeout(() => {
+      if (cloudTransferStatus === status && cloudTransferMessage === message) {
+        cloudTransferStatus = 'idle';
+        cloudTransferMessage = '';
+        cloudTransferDetail = '';
+        updateCloudTransferIndicator();
+      }
+    }, timeout);
+  }
+}
+
 function randomSalt() {
   if (window.crypto?.getRandomValues) {
     const bytes = new Uint8Array(16);
@@ -291,6 +366,7 @@ function updateAuthBar() {
     return;
   }
   bar.innerHTML = `
+    ${cloudSyncIndicatorHtml({ compact: true })}
     <span class="auth-user">${escapeHtml(currentUserLabel())}</span>
     <button class="small secondary" data-action="logout">Déconnexion</button>
   `;
@@ -989,6 +1065,8 @@ async function uploadScanFilesToSupabaseStorage(sourceState = state) {
     { kind: 'order', list: sourceState.scannedOrders || [] },
     { kind: 'receipt', list: sourceState.scannedReceipts || [] }
   ];
+  const uploadQueue = [];
+  const heavyTotal = scanHeavyDataSize(sourceState);
   for (const group of groups) {
     for (const scan of group.list) {
       const pages = scanPages(scan);
@@ -996,12 +1074,19 @@ async function uploadScanFilesToSupabaseStorage(sourceState = state) {
         const page = pages[index];
         const hasInlineFile = Boolean(page?.fileData && String(page.fileData).startsWith('data:'));
         const isLargeInline = String(page?.fileData || '').length > CLOUD_STORAGE_UPLOAD_THRESHOLD;
-        if (hasInlineFile && (isLargeInline || scanHeavyDataSize(sourceState) > LOCAL_HEAVY_SCAN_LIMIT)) {
-          const ok = await uploadScanPageToSupabaseStorage(group.kind, scan, page, index);
-          if (ok) uploaded += 1;
+        if (hasInlineFile && (isLargeInline || heavyTotal > LOCAL_HEAVY_SCAN_LIMIT)) {
+          uploadQueue.push({ group, scan, page, index });
         }
       }
     }
+  }
+  if (uploadQueue.length) {
+    setCloudTransferStatus('sending', 'Envoi des documents vers Supabase Storage', `0/${uploadQueue.length} fichier(s)`);
+  }
+  for (const item of uploadQueue) {
+    const ok = await uploadScanPageToSupabaseStorage(item.group.kind, item.scan, item.page, item.index);
+    if (ok) uploaded += 1;
+    setCloudTransferStatus('sending', 'Envoi des documents vers Supabase Storage', `${uploaded}/${uploadQueue.length} fichier(s)`);
   }
   return uploaded;
 }
@@ -1029,6 +1114,7 @@ function stateWithCloudStorageReferences(sourceState = state) {
 
 async function prepareCloudUploadState(sourceState = state, options = {}) {
   const heavyBytes = scanHeavyDataSize(sourceState);
+  setCloudTransferStatus('sending', 'Préparation de l’envoi Supabase', heavyBytes ? `Documents à traiter : ${formatBytes(heavyBytes)}` : 'Données légères');
   if (options.light === true) {
     return { data: stateWithoutHeavyScanData(sourceState), light: true, heavyBytes, storage: false };
   }
@@ -1302,6 +1388,9 @@ async function supabaseRequest(pathAndQuery, options = {}) {
 function scheduleCloudSave() {
   if (!cloudReady || !supabaseClient || isApplyingCloudState) return;
   clearTimeout(cloudSaveTimer);
+  if (cloudTransferStatus !== 'sending') {
+    setCloudTransferStatus('pending', 'Envoi Supabase en attente', 'Synchronisation dans quelques secondes…');
+  }
   cloudSaveTimer = setTimeout(() => saveCloudState(), 900);
 }
 
@@ -1333,12 +1422,15 @@ async function saveCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return;
   const tryLightFallback = options.light !== true && scanHeavyDataSize(state) > 0;
   try {
+    setCloudTransferStatus('sending', 'Envoi Supabase en cours', 'Préparation des données…');
     const cloudUpload = await prepareCloudUploadState(state, options);
     const payload = {
       id: CLOUD_RECORD_ID,
       data: cloudUpload.data,
       updated_at: new Date().toISOString()
     };
+    const payloadSize = JSON.stringify(payload).length;
+    setCloudTransferStatus('sending', 'Envoi des données vers Supabase', `${formatBytes(payloadSize)} à synchroniser`);
     await supabaseRequest(`${CLOUD_TABLE}?on_conflict=id`, {
       method: 'POST',
       headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -1351,10 +1443,12 @@ async function saveCloudState(options = {}) {
       : (cloudUpload.storage ? `complet · fichiers dans Supabase Storage (${cloudUpload.uploaded || 0} fichier(s))` : 'complet');
     saveCloudMeta({ updatedAt: payload.updated_at, savedAt: payload.updated_at, loadedAt: payload.updated_at, light: cloudUpload.light, heavyBytes: cloudUpload.heavyBytes });
     lastCloudError = '';
+    setCloudTransferStatus('success', 'Données envoyées vers Supabase', `${lastCloudSaveAt} · ${lastCloudSaveMode}`);
   } catch (error) {
     console.warn('Sauvegarde Supabase complète impossible.', error);
     if (tryLightFallback) {
       try {
+        setCloudTransferStatus('sending', 'Nouvelle tentative allégée Supabase', 'Les fichiers lourds sont exclus de cette tentative…');
         await saveCloudState({ ...options, light: true, silent: true });
         if (!lastCloudError && !options.silent) toast('Sauvegarde Supabase allégée créée : les fichiers trop lourds n’ont pas pu être envoyés.');
         return;
@@ -1364,6 +1458,7 @@ async function saveCloudState(options = {}) {
     }
     console.error('Erreur sauvegarde Supabase', error);
     lastCloudError = error.message || 'vérifie Supabase/RLS';
+    setCloudTransferStatus('error', 'Envoi Supabase impossible', lastCloudError);
     if (!options.silent) toast(`Sauvegarde cloud impossible : ${lastCloudError}`);
   }
 }
@@ -1371,6 +1466,7 @@ async function saveCloudState(options = {}) {
 async function loadCloudState(options = {}) {
   if (!cloudReady || !supabaseClient) return null;
   try {
+    if (!options.silent) setCloudTransferStatus('sending', 'Chargement depuis Supabase', 'Récupération des données cloud…');
     const rows = await supabaseRequest(`${CLOUD_TABLE}?select=data,updated_at&id=eq.${encodeURIComponent(CLOUD_RECORD_ID)}&limit=1`, {
       method: 'GET',
       headers: { Accept: 'application/json' }
@@ -1378,11 +1474,15 @@ async function loadCloudState(options = {}) {
     lastCloudError = '';
     const row = Array.isArray(rows) ? rows[0] : null;
     lastCloudUpdatedAt = row?.updated_at || '';
+    if (!options.silent) setCloudTransferStatus('success', 'Données chargées depuis Supabase', lastCloudUpdatedAt ? new Date(lastCloudUpdatedAt).toLocaleString('fr-FR') : '');
     return row?.data || null;
   } catch (error) {
     console.error('Erreur chargement Supabase', error);
     lastCloudError = error.message || 'données locales utilisées';
-    if (!options.silent) toast(`Chargement cloud impossible : ${lastCloudError}`);
+    if (!options.silent) {
+      setCloudTransferStatus('error', 'Chargement Supabase impossible', lastCloudError);
+      toast(`Chargement cloud impossible : ${lastCloudError}`);
+    }
     return null;
   }
 }
@@ -5072,6 +5172,7 @@ function renderSettings() {
         <p class="muted">La connexion Supabase est automatique : au démarrage, au retour réseau et au retour sur l’onglet. Les documents lourds sont envoyés dans Supabase Storage afin de garder la sauvegarde principale légère.</p>
         <div class="cloud-status ${cloudReady && !lastCloudError ? 'success' : 'warning'}">
           <strong>${cloudReady && !lastCloudError ? 'Cloud Supabase connecté automatiquement' : 'Connexion Supabase automatique en attente'}</strong>
+          ${cloudSyncIndicatorHtml()}
           <span>${cloudReady && !lastCloudError ? `Dernière sauvegarde : ${escapeHtml(lastCloudSaveAt || 'en attente')} ${lastCloudUpdatedAt ? `· Cloud : ${escapeHtml(new Date(lastCloudUpdatedAt).toLocaleString('fr-FR'))}` : ''}${cloudModeDetail}` : `Le logiciel fonctionne en local et réessaie automatiquement. ${lastCloudError ? `Détail : ${escapeHtml(lastCloudError)}` : 'Tu peux aussi tester manuellement.'}`}</span>
         </div>
         ${cloudHeavyHint}

@@ -1,4 +1,4 @@
-## Nouveautés v1.60
+## Nouveautés v1.61
 
 - Retour à la version **sans conversion des BC/BL en tableau** : les documents restent consultables comme documents/PDF.
 - Envoi des gros documents vers **Supabase Storage** au lieu de les garder dans `app_data`.
@@ -272,7 +272,7 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Message clair si un PDF n’est plus disponible sur l’appareil.
 
 
-## Version 1.60
+## Version 1.61
 
 - Retour à la version sans documents convertis en tableau.
 - Les BC, BL et tickets température restent des documents/PDF.
@@ -280,3 +280,10 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Le bucket utilisé est `app-documents`.
 - Les fichiers stockés dans Supabase sont récupérés uniquement quand on ouvre/télécharge le PDF.
 - Si le bucket n’est pas disponible, l’application tente encore un envoi direct plus élevé, puis bascule en mode allégé si Supabase refuse.
+
+
+## Version 1.61
+
+- Ajout d’un indicateur visible pendant l’envoi Supabase.
+- Affichage des états : en attente, envoi en cours, progression des fichiers Storage, succès ou erreur.
+- Indicateur visible dans la barre du haut et dans Paramètres > Sauvegarde / transfert.
