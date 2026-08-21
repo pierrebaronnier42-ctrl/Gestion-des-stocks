@@ -1120,3 +1120,55 @@ body.auth-required .content {
 .report-rates-wrap td:nth-child(3) {
   font-weight: 700;
 }
+
+.scan-table-card {
+  border: 1px solid #dbe3ef;
+  background: #f8fafc;
+  border-radius: 16px;
+  padding: 14px;
+  margin: 14px 0;
+}
+
+.extracted-doc-table th,
+.extracted-doc-table td {
+  font-size: 12px;
+  vertical-align: top;
+}
+
+.extracted-doc-table .source-cell {
+  max-width: 360px;
+  white-space: normal;
+  color: #475569;
+}
+
+.scan-table-empty {
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  padding: 12px;
+  background: #fff;
+  margin: 12px 0;
+}
+
+@media (max-width: 760px) {
+  .extracted-doc-table table,
+  .extracted-doc-table thead,
+  .extracted-doc-table tbody,
+  .extracted-doc-table th,
+  .extracted-doc-table td,
+  .extracted-doc-table tr {
+    display: block;
+  }
+  .extracted-doc-table thead { display: none; }
+  .extracted-doc-table tr {
+    border: 1px solid #dbe3ef;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .extracted-doc-table td {
+    border: 0;
+    border-bottom: 1px solid #eef2f7;
+  }
+  .extracted-doc-table td:last-child { border-bottom: 0; }
+}

@@ -280,3 +280,26 @@ Dans Inventaire > Mise à jour des listes, choisir le jour/type puis utiliser «
 - Page Rapports : les taux de modification Général / Ultra frais sont regroupés dans un tableau dédié.
 - Export rapport hebdomadaire en format paysage.
 - Les BC, BL et tickets température sont regroupés sous forme de liens PDF uniquement, sans affichage direct des images dans le rapport.
+
+
+## Version 1.57
+
+- Les fichiers lourds des documents numérisés ne sont plus conservés localement.
+- Quand un document est trop volumineux, seules les métadonnées restent dans la sauvegarde locale et les backups.
+- Nettoyage automatique des anciens backups locaux contenant des fichiers lourds.
+- Message clair si un PDF n’est plus disponible sur l’appareil.
+
+
+## Version 1.58
+- Conversion automatique des documents BC/BL/tickets scannés en tableaux de données légers.
+- Les images/PDF lourds ne sont plus conservés après scan/import ; seules les métadonnées et lignes extraites sont sauvegardées.
+- Les liens PDF des rapports génèrent un PDF tableau léger.
+
+
+## Version 1.59
+
+- Le ticket température n’est plus converti en tableau de données.
+- Les BC et BL restent convertis en tableaux légers.
+- Le ticket température reste conservé comme document original, consultable/téléchargeable en PDF.
+- Le bouton “Convertir tableau” n’apparaît plus pour le ticket température.
+- Les rapports continuent de proposer le ticket température en lien PDF.
